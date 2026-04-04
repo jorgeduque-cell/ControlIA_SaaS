@@ -134,12 +134,14 @@ if __name__ == "__main__":
 
     # Clear any stale Telegram connections (prevents 409 Conflict on Render restarts)
     import time
-    try:
-        bot.remove_webhook()
-        bot.get_updates(offset=-1, timeout=1)
-    except Exception:
-        pass
-    time.sleep(2)  # Let the old instance fully die
+    for attempt in range(3):
+        try:
+            bot.remove_webhook()
+            bot.get_updates(offset=-1, timeout=1)
+            logger.info("Cleanup attempt %d: OK", attempt + 1)
+        except Exception as e:
+            logger.warning("Cleanup attempt %d: %s", attempt + 1, e)
+        time.sleep(3)
 
     print("  🤖 Bot en ejecución. Ctrl+C para detener.")
     print("=" * 50)
@@ -150,5 +152,11 @@ if __name__ == "__main__":
             bot.infinity_polling(timeout=60, long_polling_timeout=60, skip_pending=True)
             break  # Clean exit
         except Exception as e:
-            logger.error("Polling crashed: %s — restarting in 5s...", e)
-            time.sleep(5)
+            logger.error("Polling crashed: %s — restarting in 10s...", e)
+            time.sleep(10)
+            # Re-cleanup before retry
+            try:
+                bot.remove_webhook()
+                bot.get_updates(offset=-1, timeout=1)
+            except Exception:
+                pass
