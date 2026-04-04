@@ -11,8 +11,12 @@ var MODULES = {
     commands: [
       { icon: '👤', label: 'Nuevo Cliente', cmd: 'nuevo_cliente' },
       { icon: '👥', label: 'Ver Cartera', cmd: 'clientes' },
-      { icon: '🔍', label: 'Buscar', cmd: 'buscar' },
-      { icon: '📊', label: 'Pipeline', cmd: 'seguimiento' }
+      { icon: '🔍', label: 'Buscar Cliente', cmd: 'buscar' },
+      { icon: '📊', label: 'Pipeline Comercial', cmd: 'seguimiento' },
+      { icon: '📝', label: 'Agregar Nota', cmd: 'nota' },
+      { icon: '📋', label: 'Ficha de Cliente', cmd: 'ficha' },
+      { icon: '📡', label: 'Radar de Clientes', cmd: 'radar' },
+      { icon: '📅', label: 'Asignar Día de Visita', cmd: 'asignar_dia' }
     ]
   },
   ventas: {
@@ -23,15 +27,28 @@ var MODULES = {
       { icon: '📦', label: 'Ver Pedidos', cmd: 'pedidos' },
       { icon: '✅', label: 'Marcar Entregado', cmd: 'entregar' },
       { icon: '💳', label: 'Cobros Pendientes', cmd: 'cobrar' },
-      { icon: '💵', label: 'Marcar Pagado', cmd: 'pagar' }
+      { icon: '💵', label: 'Marcar Pagado', cmd: 'pagar' },
+      { icon: '🔄', label: 'Repetir Último Pedido', cmd: 'repetir' }
     ]
   },
-  precios: {
-    icon: '💰', title: 'PRECIOS',
-    desc: 'Lista de precios y catálogo',
+  documentos: {
+    icon: '📄', title: 'DOCUMENTOS',
+    desc: 'Remisiones, despachos y cotizaciones',
     commands: [
-      { icon: '💰', label: 'Ver Precios', cmd: 'precios' },
-      { icon: '📦', label: 'Agregar Producto', cmd: 'nuevo_producto' }
+      { icon: '📄', label: 'Generar Remisión', cmd: 'remision' },
+      { icon: '🚛', label: 'Despacho de Mercancía', cmd: 'despacho' },
+      { icon: '💰', label: 'Ver Lista de Precios', cmd: 'precios' },
+      { icon: '📋', label: 'Cotización', cmd: 'cotizar' }
+    ]
+  },
+  logistica: {
+    icon: '🚛', title: 'LOGÍSTICA',
+    desc: 'Inventario y rutas de entrega',
+    commands: [
+      { icon: '📦', label: 'Control de Inventario', cmd: 'inventario' },
+      { icon: '🚶', label: 'Ruta a Pie', cmd: 'ruta_pie' },
+      { icon: '🚛', label: 'Ruta en Camión', cmd: 'ruta_camion' },
+      { icon: '📅', label: 'Ruta Semanal', cmd: 'ruta_semanal' }
     ]
   },
   finanzas: {
@@ -41,14 +58,20 @@ var MODULES = {
       { icon: '💼', label: 'Estado de Caja', cmd: 'caja' },
       { icon: '💳', label: 'Cartera x Cobrar', cmd: 'cuentas_por_cobrar' },
       { icon: '📝', label: 'Registrar Gasto', cmd: 'gasto' },
-      { icon: '📈', label: 'Margen Rentabilidad', cmd: 'margen' }
+      { icon: '📈', label: 'Margen Rentabilidad', cmd: 'margen' },
+      { icon: '🎯', label: 'Ver Meta Mensual', cmd: 'meta' },
+      { icon: '⚙️', label: 'Configurar Meta', cmd: 'meta_set' }
     ]
   },
   admin: {
     icon: '⚙️', title: 'ADMIN',
-    desc: 'Configuración y productos',
+    desc: 'Configuración, edición y respaldo',
     commands: [
-      { icon: '📦', label: 'Configurar Productos', cmd: 'configurar' }
+      { icon: '📦', label: 'Configurar Productos', cmd: 'configurar' },
+      { icon: '📦', label: 'Agregar Producto', cmd: 'nuevo_producto' },
+      { icon: '✏️', label: 'Editar Registro', cmd: 'editar' },
+      { icon: '🗑️', label: 'Eliminar Registro', cmd: 'eliminar' },
+      { icon: '💾', label: 'Respaldar Datos', cmd: 'backup' }
     ]
   }
 };
@@ -1006,6 +1029,186 @@ var CMD_HANDLERS = {
         };
       }
     });
+  },
+
+  // ── CRM Extras ──
+  nota: function() {
+    App.showForm({
+      title: '📝 Agregar Nota',
+      subtitle: 'Nota de seguimiento para un cliente',
+      fields: [
+        { key: 'cliente_nombre', label: 'Nombre del cliente', type: 'text', required: true, icon: '👤' },
+        { key: 'texto', label: 'Nota / Observación', type: 'text', required: true, icon: '📝' }
+      ],
+      submitLabel: 'Guardar Nota',
+      apiEndpoint: '/api/notes',
+      successMsg: '✅ Nota guardada'
+    });
+  },
+
+  ficha: function() {
+    App.showList({
+      title: '📋 Ficha de Cliente',
+      subtitle: 'Selecciona un cliente para ver su ficha',
+      apiEndpoint: '/api/clients',
+      emptyIcon: '📋',
+      emptyText: 'No hay clientes registrados',
+      searchable: true,
+      searchEndpoint: '/api/clients/search',
+      renderItem: function(item) {
+        return {
+          icon: '👤',
+          title: item.nombre,
+          subtitle: (item.tipo_cliente || 'Cliente') + ' · ' + (item.telefono || 'Sin teléfono'),
+          detail: '→'
+        };
+      },
+      onItemClick: function(item) {
+        App.showResult({
+          title: '📋 ' + item.nombre,
+          apiEndpoint: '/api/clients/' + item.id,
+          render: function(data) {
+            var c = data.client || data;
+            var rows = [
+              { icon: '👤', label: 'Nombre', value: c.nombre || 'N/A' },
+              { icon: '📱', label: 'Teléfono', value: c.telefono || 'N/A' },
+              { icon: '📍', label: 'Dirección', value: c.direccion || 'N/A' },
+              { icon: '🏷️', label: 'Tipo', value: c.tipo_cliente || 'Cliente' },
+              { icon: '📅', label: 'Día de visita', value: c.dia_visita || 'Sin asignar' },
+              { icon: '📦', label: 'Total pedidos', value: (data.orders_count || 0).toString() },
+              { icon: '💰', label: 'Total compras', value: formatCOP(data.total_purchases || 0) }
+            ];
+            return rows.map(function(r) {
+              return '<div class="glass-card" style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;margin-bottom:8px;">' +
+                '<span>' + r.icon + ' ' + r.label + '</span>' +
+                '<span style="font-weight:600;color:var(--c-secondary);">' + r.value + '</span></div>';
+            }).join('');
+          }
+        });
+      }
+    });
+  },
+
+  radar: function() {
+    showToast('📡 Usa /radar en el chat para buscar clientes cercanos con GPS', 'info');
+  },
+
+  asignar_dia: function() {
+    App.showForm({
+      title: '📅 Asignar Día de Visita',
+      subtitle: 'Programa el día de visita de un cliente',
+      fields: [
+        { key: 'cliente_nombre', label: 'Nombre del cliente', type: 'text', required: true, icon: '👤' },
+        { key: 'dia', label: 'Día', type: 'select', options: ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'], required: true, icon: '📅' }
+      ],
+      submitLabel: 'Asignar Día',
+      apiEndpoint: '/api/clients/assign-day',
+      successMsg: '✅ Día de visita asignado'
+    });
+  },
+
+  // ── Ventas Extras ──
+  repetir: function() {
+    showToast('🔄 Usa /repetir en el chat para repetir tu último pedido', 'info');
+  },
+
+  // ── Documentos ──
+  remision: function() {
+    showToast('📄 Usa /remision en el chat para generar el PDF de remisión', 'info');
+  },
+
+  despacho: function() {
+    showToast('🚛 Usa /despacho en el chat para generar el PDF de despacho', 'info');
+  },
+
+  cotizar: function() {
+    showToast('📋 Usa /cotizar en el chat para generar una cotización', 'info');
+  },
+
+  // ── Logística ──
+  inventario: function() {
+    App.showList({
+      title: '📦 Control de Inventario',
+      subtitle: 'Stock actual de productos',
+      apiEndpoint: '/api/products',
+      itemsKey: 'products',
+      emptyIcon: '📦',
+      emptyText: 'No hay productos registrados',
+      addBtn: { label: '+ Nuevo Producto', cmd: 'nuevo_producto' },
+      renderItem: function(item) {
+        var stock = item.stock || 0;
+        return {
+          icon: stock > 10 ? '🟢' : stock > 0 ? '🟡' : '🔴',
+          title: item.nombre,
+          subtitle: 'Costo: ' + formatCOP(item.precio_compra) + ' · Venta: ' + formatCOP(item.precio_venta),
+          detail: stock + ' uds'
+        };
+      }
+    });
+  },
+
+  ruta_pie: function() {
+    showToast('🚶 Usa /ruta_pie en el chat y comparte tu ubicación para calcular ruta a pie', 'info');
+  },
+
+  ruta_camion: function() {
+    showToast('🚛 Usa /ruta_camion en el chat y comparte tu ubicación para ruta en vehículo', 'info');
+  },
+
+  ruta_semanal: function() {
+    showToast('📅 Usa /ruta_semanal en el chat para ver tu planificación semanal', 'info');
+  },
+
+  // ── Finanzas Extras ──
+  meta: function() {
+    App.showResult({
+      title: '🎯 Meta Mensual',
+      apiEndpoint: '/api/finance/summary',
+      render: function(data) {
+        var meta = data.meta_mensual || 0;
+        var sales = data.total_sales || 0;
+        var pct = meta > 0 ? Math.round((sales / meta) * 100) : 0;
+        var remaining = Math.max(0, meta - sales);
+
+        return '<div class="glass-card" style="text-align:center;padding:24px;margin-bottom:12px;">' +
+          '<div style="font-size:2.5rem;margin-bottom:8px;">🎯</div>' +
+          '<div style="font-size:1.3rem;font-weight:700;color:var(--c-accent);margin-bottom:4px;">' + pct + '% cumplido</div>' +
+          '<div style="color:var(--c-text-muted);font-size:0.85rem;">Meta: ' + formatCOP(meta) + '</div>' +
+          '</div>' +
+          '<div class="glass-card" style="display:flex;justify-content:space-between;padding:14px 18px;margin-bottom:8px;">' +
+          '<span>💰 Vendido</span><span style="font-weight:700;color:#00E676;">' + formatCOP(sales) + '</span></div>' +
+          '<div class="glass-card" style="display:flex;justify-content:space-between;padding:14px 18px;margin-bottom:8px;">' +
+          '<span>📊 Faltante</span><span style="font-weight:700;color:#FF6B9D;">' + formatCOP(remaining) + '</span></div>' +
+          '<div style="margin-top:12px;text-align:center;color:var(--c-text-muted);font-size:0.8rem;">' +
+          (meta === 0 ? 'Configura tu meta con ⚙️ Configurar Meta' : '') + '</div>';
+      }
+    });
+  },
+
+  meta_set: function() {
+    App.showForm({
+      title: '⚙️ Configurar Meta',
+      subtitle: 'Define tu objetivo mensual de ventas',
+      fields: [
+        { key: 'meta', label: 'Meta mensual ($)', type: 'number', required: true, icon: '🎯' }
+      ],
+      submitLabel: 'Guardar Meta',
+      apiEndpoint: '/api/finance/meta',
+      successMsg: '✅ Meta mensual configurada'
+    });
+  },
+
+  // ── Admin ──
+  editar: function() {
+    showToast('✏️ Usa /editar en el chat para editar registros existentes', 'info');
+  },
+
+  eliminar: function() {
+    showToast('🗑️ Usa /eliminar en el chat para eliminar registros', 'info');
+  },
+
+  backup: function() {
+    showToast('💾 Usa /backup en el chat para respaldar tus datos', 'info');
   }
 };
 
