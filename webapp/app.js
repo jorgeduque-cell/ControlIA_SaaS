@@ -593,10 +593,12 @@ var App = {
         group.appendChild(select);
       } else {
         var inputType = field.type || 'text';
-        group.innerHTML = '<input type="' + inputType + '" id="form-field-' + field.key + '" class="input-group__input" ' +
-          'placeholder=" " autocomplete="off" ' + (field.required ? 'required' : '') + ' ' +
-          (inputType === 'number' ? 'inputmode="numeric" step="any"' : '') + '>' +
-          '<label class="input-group__label" for="form-field-' + field.key + '">' + (field.icon || '') + ' ' + field.label + '</label>';
+        var placeholderText = (field.icon || '') + ' ' + field.label;
+        group.innerHTML = '<input type="' + inputType + '" id="form-field-' + field.key + '" ' +
+          'placeholder="' + placeholderText + '" autocomplete="off" ' +
+          (field.required ? 'required' : '') + ' ' +
+          (inputType === 'number' ? 'inputmode="numeric" step="any"' : '') +
+          ' style="width:100%;padding:14px 16px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:12px;color:var(--c-text);font-size:0.95rem;font-family:inherit;outline:none;">';
       }
 
       if (container) container.appendChild(group);
