@@ -1184,36 +1184,31 @@ var CMD_HANDLERS = {
   remision: function() {
     App.showList({
       title: '📄 Generar Remisión',
-      subtitle: 'Selecciona pedidos para la remisión',
+      subtitle: 'Selecciona un pedido',
       apiEndpoint: '/api/orders',
       emptyIcon: '📄',
       emptyText: 'No hay pedidos registrados',
       renderItem: function(item) {
         return {
           icon: item.estado === 'Pagado' ? '✅' : '📦',
-          title: item.producto + ' × ' + item.cantidad,
-          subtitle: (item.cliente_nombre || 'Cliente') + ' · ' + item.estado,
+          title: item.producto + ' x ' + item.cantidad,
+          subtitle: (item.cliente_nombre || 'Cliente') + ' - ' + item.estado,
           detail: formatCOP(item.precio_venta * item.cantidad)
         };
       },
       onItemClick: function(item) {
-        var text = '═══ REMISIÓN ═══\n\n' +
-          'Cliente: ' + (item.cliente_nombre || 'N/A') + '\n' +
-          'Producto: ' + item.producto + '\n' +
-          'Cantidad: ' + item.cantidad + '\n' +
-          'Precio: ' + formatCOP(item.precio_venta) + '\n' +
-          'Total: ' + formatCOP(item.precio_venta * item.cantidad) + '\n' +
-          'Estado: ' + item.estado + '\n' +
-          'Fecha: ' + new Date().toLocaleDateString('es-CO') + '\n' +
-          '═══════════════';
-        var blob = new Blob([text], { type: 'text/plain' });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = 'remision_' + (item.cliente_nombre || 'pedido').replace(/\s/g, '_') + '.txt';
-        a.click();
-        URL.revokeObjectURL(url);
-        showToast('📄 Remisión descargada', 'info');
+        var lines = [];
+        lines.push('=== REMISION ===');
+        lines.push('Fecha: ' + new Date().toLocaleDateString('es-CO'));
+        lines.push('');
+        lines.push('Cliente: ' + (item.cliente_nombre || 'N/A'));
+        lines.push('Producto: ' + item.producto);
+        lines.push('Cantidad: ' + item.cantidad);
+        lines.push('Precio: ' + formatCOP(item.precio_venta));
+        lines.push('Total: ' + formatCOP(item.precio_venta * item.cantidad));
+        lines.push('Estado: ' + item.estado);
+        lines.push('================');
+        CMD_HANDLERS._showDocument('📄 Remisión', lines.join('\n'));
       }
     });
   },
@@ -1221,86 +1216,103 @@ var CMD_HANDLERS = {
   despacho: function() {
     App.showList({
       title: '🚛 Despacho de Mercancía',
-      subtitle: 'Selecciona pedidos para el despacho',
+      subtitle: 'Selecciona un pedido',
       apiEndpoint: '/api/orders?status=Pendiente',
       emptyIcon: '🚛',
-      emptyText: 'No hay pedidos pendientes de despacho',
+      emptyText: 'No hay pedidos pendientes',
       renderItem: function(item) {
         return {
           icon: '📦',
-          title: item.producto + ' × ' + item.cantidad,
-          subtitle: (item.cliente_nombre || 'Cliente') + ' · ' + (item.direccion || ''),
+          title: item.producto + ' x ' + item.cantidad,
+          subtitle: (item.cliente_nombre || 'Cliente'),
           detail: formatCOP(item.precio_venta * item.cantidad)
         };
       },
       onItemClick: function(item) {
-        var text = '═══ DESPACHO DE MERCANCÍA ═══\n\n' +
-          'Cliente: ' + (item.cliente_nombre || 'N/A') + '\n' +
-          'Dirección: ' + (item.direccion || 'N/A') + '\n' +
-          'Producto: ' + item.producto + '\n' +
-          'Cantidad: ' + item.cantidad + '\n' +
-          'Precio: ' + formatCOP(item.precio_venta) + '\n' +
-          'Total: ' + formatCOP(item.precio_venta * item.cantidad) + '\n' +
-          'Fecha despacho: ' + new Date().toLocaleDateString('es-CO') + '\n' +
-          '═══════════════════════';
-        var blob = new Blob([text], { type: 'text/plain' });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = 'despacho_' + (item.cliente_nombre || 'pedido').replace(/\s/g, '_') + '.txt';
-        a.click();
-        URL.revokeObjectURL(url);
-        showToast('🚛 Despacho descargado', 'info');
+        var lines = [];
+        lines.push('=== DESPACHO DE MERCANCIA ===');
+        lines.push('Fecha: ' + new Date().toLocaleDateString('es-CO'));
+        lines.push('');
+        lines.push('Cliente: ' + (item.cliente_nombre || 'N/A'));
+        lines.push('Direccion: ' + (item.direccion || 'N/A'));
+        lines.push('Producto: ' + item.producto);
+        lines.push('Cantidad: ' + item.cantidad);
+        lines.push('Precio: ' + formatCOP(item.precio_venta));
+        lines.push('Total: ' + formatCOP(item.precio_venta * item.cantidad));
+        lines.push('=============================');
+        CMD_HANDLERS._showDocument('🚛 Despacho', lines.join('\n'));
       }
     });
   },
 
   cotizar: function() {
-    App.showResult({
-      title: '📋 Cotización',
-      apiEndpoint: '/api/products',
-      render: function(data) {
-        var products = data.products || [];
-        if (products.length === 0) return '<div style="text-align:center;padding:32px;color:var(--c-text-muted);">No hay productos en el catálogo</div>';
-
-        var total = 0;
-        var html = '<div style="margin-bottom:16px;font-size:0.85rem;color:var(--c-text-muted);text-align:center;">Fecha: ' + new Date().toLocaleDateString('es-CO') + '</div>';
-        products.forEach(function(p) {
-          total += (p.precio_venta || 0);
-          html += '<div class="glass-card" style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;margin-bottom:8px;">' +
-            '<div><div style="font-weight:600;">' + p.nombre + '</div>' +
-            '<div style="font-size:0.75rem;color:var(--c-text-muted);">Stock: ' + (p.stock || 0) + '</div></div>' +
-            '<span style="font-weight:700;color:var(--c-accent);">' + formatCOP(p.precio_venta) + '</span></div>';
-        });
-
-        html += '<div style="margin-top:16px;text-align:center;">' +
-          '<div onclick="CMD_HANDLERS._downloadCotizacion()" ' +
-          'style="display:inline-block;padding:12px 24px;background:var(--c-primary);color:white;border-radius:12px;cursor:pointer;font-weight:600;touch-action:manipulation;">⬇️ Descargar Cotización</div></div>';
-        return html;
-      }
-    });
-  },
-
-  _downloadCotizacion: function() {
     API.get('/api/products').then(function(data) {
       var products = data.products || [];
-      var text = '═══ COTIZACIÓN ═══\n\nFecha: ' + new Date().toLocaleDateString('es-CO') + '\n\n';
+      if (products.length === 0) { showToast('No hay productos en el catálogo', 'error'); return; }
+      var lines = [];
+      lines.push('=== COTIZACION ===');
+      lines.push('Fecha: ' + new Date().toLocaleDateString('es-CO'));
+      lines.push('');
+      var total = 0;
       products.forEach(function(p, i) {
-        text += (i + 1) + '. ' + p.nombre + ' — ' + formatCOP(p.precio_venta) + '\n';
+        lines.push((i + 1) + '. ' + p.nombre + ' -- ' + formatCOP(p.precio_venta));
+        total += (p.precio_venta || 0);
       });
-      text += '\n═══════════════';
-      var blob = new Blob([text], { type: 'text/plain' });
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url;
-      a.download = 'cotizacion_' + new Date().toISOString().slice(0, 10) + '.txt';
-      a.click();
-      URL.revokeObjectURL(url);
-      showToast('📋 Cotización descargada', 'info');
-    });
+      lines.push('');
+      lines.push('Total catalogo: ' + formatCOP(total));
+      lines.push('=================');
+      CMD_HANDLERS._showDocument('📋 Cotización', lines.join('\n'));
+    }).catch(function() { showToast('Error al cargar productos', 'error'); });
   },
 
-  // ── Logística ──
+  _showDocument: function(title, text) {
+    var titleEl = document.getElementById('data-result-title');
+    var content = document.getElementById('data-result-content');
+    if (titleEl) titleEl.textContent = title;
+
+    if (content) {
+      content.innerHTML =
+        '<div id="doc-text" style="background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:12px;padding:16px;margin-bottom:16px;white-space:pre-wrap;font-family:monospace;font-size:0.85rem;line-height:1.6;color:var(--c-text);max-height:55vh;overflow-y:auto;">' +
+        text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') +
+        '</div>' +
+        '<div onclick="CMD_HANDLERS._copyDocument()" style="text-align:center;padding:14px;background:var(--c-primary);color:white;border-radius:12px;cursor:pointer;font-weight:600;touch-action:manipulation;user-select:none;">📋 Copiar al Portapapeles</div>';
+    }
+    pushNav('data-result');
+  },
+
+  _copyDocument: function() {
+    var el = document.getElementById('doc-text');
+    if (!el) return;
+    var text = el.textContent || el.innerText;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function() {
+        showToast('📋 Copiado! Pegalo en WhatsApp, Email u otra app', 'info');
+        haptic('success');
+      }).catch(function() {
+        CMD_HANDLERS._fallbackCopy(text);
+      });
+    } else {
+      CMD_HANDLERS._fallbackCopy(text);
+    }
+  },
+
+  _fallbackCopy: function(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:-9999px;';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+      showToast('📋 Copiado! Pegalo donde necesites', 'info');
+      haptic('success');
+    } catch (e) {
+      showToast('Selecciona el texto manualmente para copiar', 'error');
+    }
+    document.body.removeChild(ta);
+  },
+
+  // ── Logistica ──
   inventario: function() {
     App.showList({
       title: '📦 Control de Inventario',
@@ -1315,7 +1327,7 @@ var CMD_HANDLERS = {
         return {
           icon: stock > 10 ? '🟢' : stock > 0 ? '🟡' : '🔴',
           title: item.nombre,
-          subtitle: 'Costo: ' + formatCOP(item.precio_compra) + ' · Venta: ' + formatCOP(item.precio_venta),
+          subtitle: 'Costo: ' + formatCOP(item.precio_compra) + ' | Venta: ' + formatCOP(item.precio_venta),
           detail: stock + ' uds'
         };
       }
@@ -1324,37 +1336,38 @@ var CMD_HANDLERS = {
 
   ruta_pie: function() {
     if (!navigator.geolocation) { showToast('Tu dispositivo no soporta GPS', 'error'); return; }
-    showToast('📍 Obteniendo ubicación...', 'info');
+    showToast('Obteniendo ubicacion...', 'info');
     navigator.geolocation.getCurrentPosition(
       function(pos) {
         API.get('/api/clients').then(function(data) {
           var clients = (data.items || []).filter(function(c) { return c.direccion; });
-          if (clients.length === 0) { showToast('No hay clientes con dirección', 'error'); return; }
-          var destinations = clients.slice(0, 10).map(function(c) { return encodeURIComponent(c.direccion); }).join('|');
-          var url = 'https://www.google.com/maps/dir/' + pos.coords.latitude + ',' + pos.coords.longitude + '/' + clients.slice(0, 10).map(function(c) { return encodeURIComponent(c.direccion); }).join('/') + '/?dirflg=w';
+          if (clients.length === 0) { showToast('No hay clientes con direccion', 'error'); return; }
+          var parts = clients.slice(0, 10).map(function(c) { return encodeURIComponent(c.direccion); });
+          var url = 'https://www.google.com/maps/dir/' + pos.coords.latitude + ',' + pos.coords.longitude + '/' + parts.join('/') + '/?dirflg=w';
           window.open(url, '_blank');
-          showToast('🚶 Ruta a pie abierta en Google Maps', 'info');
+          showToast('Ruta a pie abierta en Google Maps', 'info');
         });
       },
-      function() { showToast('No se pudo obtener tu ubicación', 'error'); },
+      function() { showToast('No se pudo obtener tu ubicacion', 'error'); },
       { enableHighAccuracy: true, timeout: 15000 }
     );
   },
 
   ruta_camion: function() {
     if (!navigator.geolocation) { showToast('Tu dispositivo no soporta GPS', 'error'); return; }
-    showToast('📍 Obteniendo ubicación...', 'info');
+    showToast('Obteniendo ubicacion...', 'info');
     navigator.geolocation.getCurrentPosition(
       function(pos) {
         API.get('/api/clients').then(function(data) {
           var clients = (data.items || []).filter(function(c) { return c.direccion; });
-          if (clients.length === 0) { showToast('No hay clientes con dirección', 'error'); return; }
-          var url = 'https://www.google.com/maps/dir/' + pos.coords.latitude + ',' + pos.coords.longitude + '/' + clients.slice(0, 10).map(function(c) { return encodeURIComponent(c.direccion); }).join('/');
+          if (clients.length === 0) { showToast('No hay clientes con direccion', 'error'); return; }
+          var parts = clients.slice(0, 10).map(function(c) { return encodeURIComponent(c.direccion); });
+          var url = 'https://www.google.com/maps/dir/' + pos.coords.latitude + ',' + pos.coords.longitude + '/' + parts.join('/');
           window.open(url, '_blank');
-          showToast('🚛 Ruta en vehículo abierta en Google Maps', 'info');
+          showToast('Ruta en vehiculo abierta en Google Maps', 'info');
         });
       },
-      function() { showToast('No se pudo obtener tu ubicación', 'error'); },
+      function() { showToast('No se pudo obtener tu ubicacion', 'error'); },
       { enableHighAccuracy: true, timeout: 15000 }
     );
   },
@@ -1362,15 +1375,15 @@ var CMD_HANDLERS = {
   ruta_semanal: function() {
     App.showList({
       title: '📅 Ruta Semanal',
-      subtitle: 'Clientes organizados por día de visita',
+      subtitle: 'Clientes organizados por dia de visita',
       apiEndpoint: '/api/clients',
       emptyIcon: '📅',
-      emptyText: 'Asigna días de visita a tus clientes primero',
+      emptyText: 'Asigna dias de visita a tus clientes primero',
       renderItem: function(item) {
         return {
           icon: item.dia_visita ? '📅' : '⬜',
           title: item.nombre,
-          subtitle: item.dia_visita || 'Sin día asignado',
+          subtitle: item.dia_visita || 'Sin dia asignado',
           detail: item.direccion ? '📍' : ''
         };
       },
@@ -1378,7 +1391,7 @@ var CMD_HANDLERS = {
         if (item.direccion) {
           window.open('https://www.google.com/maps/search/' + encodeURIComponent(item.direccion), '_blank');
         } else {
-          showToast('Cliente sin dirección registrada', 'info');
+          showToast('Cliente sin direccion registrada', 'info');
         }
       }
     });
@@ -1394,17 +1407,16 @@ var CMD_HANDLERS = {
         var sales = data.total_sales || 0;
         var pct = meta > 0 ? Math.round((sales / meta) * 100) : 0;
         var remaining = Math.max(0, meta - sales);
-
         return '<div class="glass-card" style="text-align:center;padding:24px;margin-bottom:12px;">' +
           '<div style="font-size:2.5rem;margin-bottom:8px;">🎯</div>' +
           '<div style="font-size:1.3rem;font-weight:700;color:var(--c-accent);margin-bottom:4px;">' + pct + '% cumplido</div>' +
           '<div style="color:var(--c-text-muted);font-size:0.85rem;">Meta: ' + formatCOP(meta) + '</div>' +
           '</div>' +
           '<div class="glass-card" style="display:flex;justify-content:space-between;padding:14px 18px;margin-bottom:8px;">' +
-          '<span>💰 Vendido</span><span style="font-weight:700;color:#00E676;">' + formatCOP(sales) + '</span></div>' +
+          '<span>Vendido</span><span style="font-weight:700;color:#00E676;">' + formatCOP(sales) + '</span></div>' +
           '<div class="glass-card" style="display:flex;justify-content:space-between;padding:14px 18px;margin-bottom:8px;">' +
-          '<span>📊 Faltante</span><span style="font-weight:700;color:#FF6B9D;">' + formatCOP(remaining) + '</span></div>' +
-          (meta === 0 ? '<div style="margin-top:12px;text-align:center;color:var(--c-text-muted);font-size:0.8rem;">Configura tu meta con ⚙️ Configurar Meta</div>' : '');
+          '<span>Faltante</span><span style="font-weight:700;color:#FF6B9D;">' + formatCOP(remaining) + '</span></div>' +
+          (meta === 0 ? '<div style="margin-top:12px;text-align:center;color:var(--c-text-muted);font-size:0.8rem;">Configura tu meta con Configurar Meta</div>' : '');
       }
     });
   },
@@ -1418,7 +1430,7 @@ var CMD_HANDLERS = {
       ],
       submitLabel: 'Guardar Meta',
       apiEndpoint: '/api/finance/meta',
-      successMsg: '✅ Meta mensual configurada'
+      successMsg: 'Meta mensual configurada'
     });
   },
 
@@ -1426,7 +1438,7 @@ var CMD_HANDLERS = {
   editar: function() {
     App.showList({
       title: '✏️ Editar Registro',
-      subtitle: '¿Qué tipo de registro deseas editar?',
+      subtitle: 'Selecciona el cliente a editar',
       apiEndpoint: '/api/clients',
       emptyIcon: '✏️',
       emptyText: 'No hay registros para editar',
@@ -1434,7 +1446,7 @@ var CMD_HANDLERS = {
         return {
           icon: '👤',
           title: item.nombre,
-          subtitle: (item.tipo_cliente || 'Cliente') + ' · ' + (item.telefono || ''),
+          subtitle: (item.tipo_cliente || 'Cliente') + ' | ' + (item.telefono || ''),
           detail: '✏️'
         };
       },
@@ -1444,14 +1456,14 @@ var CMD_HANDLERS = {
           subtitle: 'Modifica los datos del cliente',
           fields: [
             { key: 'nombre', label: 'Nombre', type: 'text', icon: '👤' },
-            { key: 'telefono', label: 'Teléfono', type: 'tel', icon: '📱' },
-            { key: 'direccion', label: 'Dirección', type: 'text', icon: '📍' },
+            { key: 'telefono', label: 'Telefono', type: 'tel', icon: '📱' },
+            { key: 'direccion', label: 'Direccion', type: 'text', icon: '📍' },
             { key: 'tipo_cliente', label: 'Tipo', type: 'select', options: ['Cliente', 'Prospecto'], icon: '🏷️' }
           ],
           submitLabel: 'Guardar Cambios',
           apiEndpoint: '/api/clients',
           prefill: item,
-          successMsg: '✅ Cliente actualizado'
+          successMsg: 'Cliente actualizado'
         });
       }
     });
@@ -1468,15 +1480,15 @@ var CMD_HANDLERS = {
         return {
           icon: '⚠️',
           title: item.nombre,
-          subtitle: (item.tipo_cliente || 'Cliente') + ' · ' + (item.telefono || ''),
+          subtitle: (item.tipo_cliente || 'Cliente') + ' | ' + (item.telefono || ''),
           detail: '🗑️'
         };
       },
       onItemClick: function(item) {
-        if (confirm('⚠️ ¿Eliminar permanentemente a ' + item.nombre + '?\n\nEsta acción no se puede deshacer.')) {
+        if (confirm('Eliminar permanentemente a ' + item.nombre + '? Esta accion no se puede deshacer.')) {
           API.post('/api/delete/client', { id: item.id })
             .then(function() {
-              showToast('🗑️ Cliente eliminado', 'info');
+              showToast('Cliente eliminado', 'info');
               haptic('medium');
               CMD_HANDLERS.eliminar();
             })
@@ -1487,18 +1499,10 @@ var CMD_HANDLERS = {
   },
 
   backup: function() {
-    showToast('💾 Generando respaldo...', 'info');
+    showToast('Generando respaldo...', 'info');
     API.get('/api/backup').then(function(data) {
       var text = JSON.stringify(data.backup, null, 2);
-      var blob = new Blob([text], { type: 'application/json' });
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url;
-      a.download = 'controlia_backup_' + new Date().toISOString().slice(0, 10) + '.json';
-      a.click();
-      URL.revokeObjectURL(url);
-      showToast('💾 Respaldo descargado exitosamente', 'info');
-      haptic('success');
+      CMD_HANDLERS._showDocument('💾 Respaldo de Datos', text);
     }).catch(function() { showToast('Error al generar respaldo', 'error'); });
   }
 };
