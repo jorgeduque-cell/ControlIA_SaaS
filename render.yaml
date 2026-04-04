@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: controlia-saas
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: SUBSCRIPTION_PRICE_COP
+        value: "80000"
+      - key: TRIAL_DAYS
+        value: "3"
+      - key: PYTHON_VERSION
+        value: "3.11.8"

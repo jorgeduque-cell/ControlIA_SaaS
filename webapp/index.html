@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0A0A1A">
+  <meta name="description" content="ControlIA — Tu asistente de ventas inteligente. CRM, pedidos, finanzas y logística desde Telegram.">
+  <title>ControlIA</title>
+
+  <!-- Telegram WebApp SDK -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+  <!-- ═══ ANIMATED BACKGROUND ═══ -->
+  <div class="bg-mesh" aria-hidden="true">
+    <div class="bg-mesh__orb bg-mesh__orb--1"></div>
+    <div class="bg-mesh__orb bg-mesh__orb--2"></div>
+    <div class="bg-mesh__orb bg-mesh__orb--3"></div>
+  </div>
+
+  <!-- ═══ APP CONTAINER ═══ -->
+  <div id="app">
+
+    <!-- ═══ SCREEN: LOADING ═══ -->
+    <section id="screen-loading" class="screen active" role="status" aria-label="Cargando">
+      <div class="welcome" style="min-height:85vh;align-items:center;justify-content:center;display:flex;flex-direction:column;gap:16px;">
+        <div class="welcome__logo">📊</div>
+        <div class="welcome__brand">ControlIA</div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <div class="btn__spinner" style="border-color:rgba(108,60,225,0.3);border-top-color:#6C3CE1;"></div>
+          <span style="color:var(--c-text-muted);font-size:0.85rem;">Cargando...</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ SCREEN: WELCOME (New Users) ═══ -->
+    <section id="screen-welcome" class="screen" role="main" aria-label="Bienvenida">
+      <div class="welcome">
+        <div class="welcome__logo" id="welcome-logo">📊</div>
+        <div class="welcome__brand">ControlIA</div>
+        <div class="welcome__tagline" id="typewriter-target"></div>
+
+        <div class="welcome__features">
+          <div class="welcome__feature">
+            <span class="welcome__feature-icon">📋</span>
+            <span>Gestiona clientes y prospectos</span>
+          </div>
+          <div class="welcome__feature">
+            <span class="welcome__feature-icon">🛒</span>
+            <span>Crea pedidos y controla entregas</span>
+          </div>
+          <div class="welcome__feature">
+            <span class="welcome__feature-icon">💰</span>
+            <span>Lleva tus finanzas al día</span>
+          </div>
+          <div class="welcome__feature">
+            <span class="welcome__feature-icon">🗺️</span>
+            <span>Planifica rutas de venta</span>
+          </div>
+          <div class="welcome__feature">
+            <span class="welcome__feature-icon">📄</span>
+            <span>Genera documentos PDF profesionales</span>
+          </div>
+        </div>
+
+        <div class="welcome__trial-badge" id="trial-badge">
+          🎁 <span id="trial-days-text">7 días de prueba gratis</span>
+        </div>
+
+        <button class="btn btn--primary w-full mt-md" id="btn-start-register" onclick="App.showScreen('register-1')">
+          Comenzar Gratis →
+        </button>
+      </div>
+    </section>
+
+    <!-- ═══ SCREEN: REGISTER STEP 1 ═══ -->
+    <section id="screen-register-1" class="screen" role="form" aria-label="Registro paso 1">
+      <div class="register">
+        <div class="progress-bar">
+          <div class="progress-bar__fill" style="width: 50%"></div>
+        </div>
+        <span class="register__step-label">Paso 1 de 2</span>
+
+        <div class="glass-card glass-card--elevated register__card">
+          <div class="register__icon">🏢</div>
+          <h1 class="register__title">¿Cómo se llama tu negocio?</h1>
+          <p class="register__subtitle">Este nombre aparecerá en tus documentos y cotizaciones</p>
+
+          <div class="input-group w-full">
+            <input type="text" id="input-business-name" class="input-group__input" placeholder=" " autocomplete="off" maxlength="100">
+            <label class="input-group__label" for="input-business-name">Nombre del negocio</label>
+            <span class="input-group__icon">🏪</span>
+            <div class="input-group__error" id="error-business-name">Ingresa el nombre de tu negocio</div>
+          </div>
+
+          <button class="btn btn--primary w-full" id="btn-next-step" onclick="App.goToRegisterStep2()">
+            Siguiente →
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ SCREEN: REGISTER STEP 2 ═══ -->
+    <section id="screen-register-2" class="screen" role="form" aria-label="Registro paso 2">
+      <div class="register">
+        <div class="progress-bar">
+          <div class="progress-bar__fill" style="width: 100%"></div>
+        </div>
+        <span class="register__step-label">Paso 2 de 2</span>
+
+        <div class="glass-card glass-card--elevated register__card">
+          <div class="register__icon">📱</div>
+          <h1 class="register__title">Tu WhatsApp</h1>
+          <p class="register__subtitle">Este número aparecerá en cotizaciones para tus clientes</p>
+
+          <div class="input-group input-group--prefixed w-full">
+            <span class="input-group__prefix">+57</span>
+            <input type="tel" id="input-phone" class="input-group__input" placeholder=" " autocomplete="tel" maxlength="15">
+            <label class="input-group__label" for="input-phone">Número de WhatsApp</label>
+            <div class="input-group__error" id="error-phone">Ingresa un número válido</div>
+          </div>
+
+          <button class="btn btn--primary w-full" id="btn-register" onclick="App.submitRegistration()">
+            <span id="btn-register-text">Crear Cuenta →</span>
+            <div id="btn-register-spinner" class="btn__spinner hidden"></div>
+          </button>
+
+          <button class="btn btn--ghost" onclick="App.showScreen('register-1')">
+            ← Volver
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ SCREEN: SUCCESS ═══ -->
+    <section id="screen-success" class="screen" role="status" aria-label="Registro exitoso">
+      <div class="success">
+        <div class="success__check">
+          <svg class="success__check-icon" viewBox="0 0 24 24">
+            <polyline points="4 12 10 18 20 6"></polyline>
+          </svg>
+        </div>
+
+        <h1 class="success__title">¡Cuenta creada!</h1>
+
+        <div class="glass-card success__info">
+          <div class="success__info-row">
+            <span class="success__info-label">🏢 Negocio</span>
+            <span class="success__info-value" id="success-business"></span>
+          </div>
+          <div class="success__info-row">
+            <span class="success__info-label">📱 WhatsApp</span>
+            <span class="success__info-value" id="success-phone"></span>
+          </div>
+          <div class="success__info-row">
+            <span class="success__info-label">📅 Prueba gratis hasta</span>
+            <span class="success__info-value" id="success-trial-end"></span>
+          </div>
+          <div class="success__info-row">
+            <span class="success__info-label">💰 Después</span>
+            <span class="success__info-value" id="success-price"></span>
+          </div>
+        </div>
+
+        <div class="success__buttons">
+          <button class="btn btn--primary" onclick="App.showScreen('dashboard')">
+            Ir al Panel →
+          </button>
+          <button class="btn btn--secondary" onclick="App.sendCommand('configurar')">
+            📦 Configurar Productos
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ SCREEN: DASHBOARD ═══ -->
+    <section id="screen-dashboard" class="screen" role="main" aria-label="Panel principal">
+      <div class="dashboard">
+        <!-- Header -->
+        <div class="dashboard__header">
+          <div class="dashboard__business">
+            <h1 class="dashboard__business-name" id="dash-business-name">Mi Negocio</h1>
+            <span class="dashboard__date" id="dash-date"></span>
+          </div>
+          <span class="badge" id="dash-badge">Activo</span>
+        </div>
+
+        <!-- KPIs -->
+        <div class="kpi-grid" id="kpi-grid">
+          <div class="glass-card kpi-card kpi-card--clients">
+            <span class="kpi-card__icon">👥</span>
+            <span class="kpi-card__value" id="kpi-clients">0</span>
+            <span class="kpi-card__label">Clientes</span>
+            <span class="kpi-card__detail" id="kpi-clients-detail">0 activos · 0 prospectos</span>
+          </div>
+          <div class="glass-card kpi-card kpi-card--pending">
+            <span class="kpi-card__icon">📦</span>
+            <span class="kpi-card__value" id="kpi-pending">0</span>
+            <span class="kpi-card__label">Pedidos Pendientes</span>
+          </div>
+          <div class="glass-card kpi-card kpi-card--unpaid">
+            <span class="kpi-card__icon">💳</span>
+            <span class="kpi-card__value" id="kpi-unpaid">0</span>
+            <span class="kpi-card__label">Sin Pagar</span>
+          </div>
+          <div class="glass-card kpi-card kpi-card--sales">
+            <span class="kpi-card__icon">💰</span>
+            <span class="kpi-card__value kpi-card__value--currency" id="kpi-sales">$0</span>
+            <span class="kpi-card__label">Ventas Hoy</span>
+          </div>
+        </div>
+
+        <!-- Modules -->
+        <span class="section-title">Módulos</span>
+        <div class="module-grid" id="module-grid">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Footer -->
+        <div class="dashboard__footer">
+          <div class="dashboard__footer-link" onclick="App.showScreen('account')">
+            👤 Mi Cuenta y Suscripción
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ SCREEN: MODULE DETAIL ═══ -->
+    <section id="screen-module" class="screen" role="navigation" aria-label="Detalle de módulo">
+      <div class="module-detail">
+        <div class="module-detail__header">
+          <button class="module-detail__back" onclick="App.showScreen('dashboard')" aria-label="Volver">←</button>
+          <div class="module-detail__info">
+            <h2 class="module-detail__title" id="mod-title">Módulo</h2>
+            <p class="module-detail__desc" id="mod-desc">Descripción</p>
+          </div>
+        </div>
+
+        <span class="section-title">Acciones</span>
+        <div class="action-list" id="action-list">
+          <!-- Populated by JS -->
+        </div>
+
+        <button class="btn btn--ghost mt-lg" onclick="App.showScreen('dashboard')">
+          ← Volver al Panel
+        </button>
+      </div>
+    </section>
+
+    <!-- ═══ SCREEN: ACCOUNT ═══ -->
+    <section id="screen-account" class="screen" role="main" aria-label="Mi cuenta">
+      <div class="account">
+        <div class="module-detail__header">
+          <button class="module-detail__back" onclick="App.showScreen('dashboard')" aria-label="Volver">←</button>
+          <div class="module-detail__info">
+            <h2 class="module-detail__title">Mi Cuenta</h2>
+          </div>
+        </div>
+
+        <div class="glass-card glass-card--elevated">
+          <div class="account__header mb-md">
+            <div class="account__avatar">👤</div>
+            <div>
+              <h3 id="acct-business" style="font-weight:700;font-size:1rem;">Mi Negocio</h3>
+              <span class="badge" id="acct-badge">Activo</span>
+            </div>
+          </div>
+
+          <div class="account__info-row">
+            <span class="account__info-label">📱 WhatsApp</span>
+            <span class="account__info-value" id="acct-phone">N/A</span>
+          </div>
+          <div class="account__info-row">
+            <span class="account__info-label">📅 Vence</span>
+            <span class="account__info-value" id="acct-expiry">N/A</span>
+          </div>
+          <div class="account__info-row">
+            <span class="account__info-label">📦 Productos</span>
+            <span class="account__info-value" id="acct-products">0</span>
+          </div>
+          <div class="account__info-row">
+            <span class="account__info-label">🆔 ID</span>
+            <span class="account__info-value" style="font-family:monospace;font-size:0.8rem;" id="acct-id">0</span>
+          </div>
+
+          <div class="subscription-bar">
+            <div class="subscription-bar__fill" id="acct-sub-bar" style="width:100%;"></div>
+          </div>
+          <span style="font-size:0.75rem;color:var(--c-text-muted);margin-top:4px;" id="acct-sub-text">Suscripción activa</span>
+        </div>
+
+        <button class="btn btn--secondary" onclick="App.showScreen('dashboard')">
+          ← Volver al Panel
+        </button>
+      </div>
+    </section>
+
+    <!-- ═══ SCREEN: EXPIRED ═══ -->
+    <section id="screen-expired" class="screen" role="alert" aria-label="Suscripción vencida">
+      <div class="expired">
+        <div class="expired__icon">🔒</div>
+        <h1 class="expired__title">Suscripción Vencida</h1>
+        <p class="expired__message">
+          Tus datos están seguros y no se perderán.<br>
+          Para volver a usar todos los módulos, renueva tu suscripción.
+        </p>
+
+        <div class="glass-card w-full" style="text-align:center;padding:24px;">
+          <div class="expired__price" id="expired-price">$80.000</div>
+          <div class="expired__price-period">/mes</div>
+        </div>
+
+        <button class="btn btn--accent w-full" onclick="App.sendCommand('start')">
+          💳 Renovar Suscripción
+        </button>
+
+        <p style="font-size:0.8rem;color:var(--c-text-muted);">
+          Vencimiento: <span id="expired-date">N/A</span>
+        </p>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ═══ TOAST ═══ -->
+  <div class="toast" id="toast" role="alert" aria-live="polite"></div>
+
+  <!-- ═══ CONFETTI CONTAINER ═══ -->
+  <div class="confetti-container" id="confetti" aria-hidden="true"></div>
+
+  <!-- App Logic -->
+  <script src="./app.js"></script>
+</body>
+</html>
