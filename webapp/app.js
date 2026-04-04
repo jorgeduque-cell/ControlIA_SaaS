@@ -229,31 +229,34 @@ const App = {
 
   // ─── SCREEN MANAGEMENT ───
   showScreen(screenId) {
-    // Hide all screens
-    document.querySelectorAll('.screen').forEach(s => {
-      s.classList.remove('active');
-    });
-
-    // Show target
-    const target = document.getElementById('screen-' + screenId);
-    if (target) {
-      // Small delay for animation trigger
-      requestAnimationFrame(() => {
-        target.classList.add('active');
+    try {
+      // Hide all screens
+      document.querySelectorAll('.screen').forEach(s => {
+        s.classList.remove('active');
       });
-      this.currentScreen = screenId;
-    }
 
-    // Telegram back button
-    if (IS_TELEGRAM) {
-      if (['dashboard', 'welcome', 'loading', 'expired'].includes(screenId)) {
-        tg.BackButton.hide();
-      } else {
-        tg.BackButton.show();
+      // Show target directly (no requestAnimationFrame — causes issues in Telegram WebView)
+      const target = document.getElementById('screen-' + screenId);
+      if (target) {
+        target.classList.add('active');
+        this.currentScreen = screenId;
       }
-    }
 
-    haptic('light');
+      // Telegram back button
+      if (IS_TELEGRAM) {
+        try {
+          if (['dashboard', 'welcome', 'loading', 'expired'].includes(screenId)) {
+            tg.BackButton.hide();
+          } else {
+            tg.BackButton.show();
+          }
+        } catch(e) { /* BackButton not available */ }
+      }
+
+      haptic('light');
+    } catch(e) {
+      showToast('Error: ' + e.message, 'error');
+    }
   },
 
   // ─── INIT ───
@@ -448,7 +451,7 @@ const App = {
         `${s.active_clients || 0} activos · ${s.prospects || 0} prospectos`;
     }
 
-    // Module grid
+    // Module grid — use data-attributes + event delegation for Telegram WebView
     const grid = document.getElementById('module-grid');
     grid.innerHTML = '';
 
@@ -457,8 +460,7 @@ const App = {
       card.className = 'module-card';
       card.setAttribute('role', 'button');
       card.setAttribute('tabindex', '0');
-      card.onclick = () => this.openModule(key);
-      card.onkeydown = (e) => { if (e.key === 'Enter') this.openModule(key); };
+      card.setAttribute('data-module', key);
 
       card.innerHTML = `
         <div class="module-card__icon">${mod.icon}</div>
@@ -467,6 +469,17 @@ const App = {
       `;
       grid.appendChild(card);
     }
+
+    // Event delegation — single listener on parent handles all module clicks
+    grid.onclick = (e) => {
+      const card = e.target.closest('[data-module]');
+      if (card) {
+        e.preventDefault();
+        e.stopPropagation();
+        const moduleKey = card.getAttribute('data-module');
+        this.openModule(moduleKey);
+      }
+    };
 
     // Account screen data
     this._renderAccount();
@@ -517,34 +530,51 @@ const App = {
 
   // ─── MODULE DETAIL ───
   openModule(key) {
-    const mod = MODULES[key];
-    if (!mod) return;
+    try {
+      const mod = MODULES[key];
+      if (!mod) {
+        showToast('Módulo no encontrado: ' + key, 'error');
+        return;
+      }
 
-    haptic('light');
+      haptic('light');
 
-    document.getElementById('mod-title').textContent = `${mod.icon} ${mod.title}`;
-    document.getElementById('mod-desc').textContent = mod.desc;
+      document.getElementById('mod-title').textContent = `${mod.icon} ${mod.title}`;
+      document.getElementById('mod-desc').textContent = mod.desc;
 
-    const list = document.getElementById('action-list');
-    list.innerHTML = '';
+      const list = document.getElementById('action-list');
+      list.innerHTML = '';
 
-    mod.commands.forEach(cmd => {
-      const item = document.createElement('div');
-      item.className = 'action-item';
-      item.setAttribute('role', 'button');
-      item.setAttribute('tabindex', '0');
-      item.onclick = () => this.sendCommand(cmd.cmd);
-      item.onkeydown = (e) => { if (e.key === 'Enter') this.sendCommand(cmd.cmd); };
+      mod.commands.forEach(cmd => {
+        const item = document.createElement('div');
+        item.className = 'action-item';
+        item.setAttribute('role', 'button');
+        item.setAttribute('tabindex', '0');
+        item.setAttribute('data-cmd', cmd.cmd);
 
-      item.innerHTML = `
-        <span class="action-item__icon">${cmd.icon}</span>
-        <span class="action-item__label">${cmd.label}</span>
-        <span class="action-item__arrow">→</span>
-      `;
-      list.appendChild(item);
-    });
+        item.innerHTML = `
+          <span class="action-item__icon">${cmd.icon}</span>
+          <span class="action-item__label">${cmd.label}</span>
+          <span class="action-item__arrow">→</span>
+        `;
+        list.appendChild(item);
+      });
 
-    this.showScreen('module');
+      // Event delegation for action items
+      list.onclick = (e) => {
+        const item = e.target.closest('[data-cmd]');
+        if (item) {
+          e.preventDefault();
+          e.stopPropagation();
+          const cmd = item.getAttribute('data-cmd');
+          this.sendCommand(cmd);
+        }
+      };
+
+      this.showScreen('module');
+    } catch(e) {
+      showToast('Error: ' + e.message, 'error');
+    }
   },
 
   // ─── SEND COMMAND → Close Mini App & dispatch to bot ───
