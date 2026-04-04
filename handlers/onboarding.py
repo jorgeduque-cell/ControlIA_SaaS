@@ -129,10 +129,13 @@ def register(bot):
         webapp_url = _get_webapp_url()
 
         if webapp_url:
-            # ── PRIMARY: Mini App WebApp Button ──
-            markup = types.InlineKeyboardMarkup()
+            # ── PRIMARY: Mini App via ReplyKeyboard (required for sendData() to work) ──
+            markup = types.ReplyKeyboardMarkup(
+                resize_keyboard=True,
+                one_time_keyboard=False,
+            )
             markup.add(
-                types.InlineKeyboardButton(
+                types.KeyboardButton(
                     "📊 Abrir ControlIA",
                     web_app=types.WebAppInfo(url=webapp_url),
                 )
@@ -143,7 +146,7 @@ def register(bot):
                     "👋 <b>¡Bienvenido a ControlIA!</b>\n\n"
                     "Tu asistente de ventas inteligente.\n"
                     f"🎁 <b>{TRIAL_DAYS} días de prueba gratis</b>\n\n"
-                    "Toca el botón para comenzar ↓"
+                    "Toca <b>📊 Abrir ControlIA</b> en el teclado ↓"
                 )
             else:
                 fecha_venc = safe_parse_date(vendedor.get("fecha_vencimiento"))
@@ -153,14 +156,14 @@ def register(bot):
                     text = (
                         f"🏢 <b>{vendedor['nombre_negocio']}</b>\n"
                         "🔴 Tu suscripción ha vencido.\n\n"
-                        "Toca el botón para ver opciones de renovación ↓"
+                        "Toca <b>📊 Abrir ControlIA</b> para ver opciones ↓"
                     )
                 else:
                     estado_emoji = "🟢" if estado == "Activo" else "🟡"
                     text = (
                         f"🏢 <b>{vendedor['nombre_negocio']}</b>\n"
                         f"{estado_emoji} {estado}\n\n"
-                        "Toca el botón para abrir tu panel ↓"
+                        "Toca <b>📊 Abrir ControlIA</b> para abrir tu panel ↓"
                     )
 
             bot.send_message(message.chat.id, text, reply_markup=markup)

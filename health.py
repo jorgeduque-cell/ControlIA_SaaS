@@ -197,6 +197,23 @@ class AppHandler(BaseHTTPRequestHandler):
             self._api_get_dashboard(vendor_id)
         elif path == '/api/products':
             self._api_get_products(vendor_id)
+        elif path == '/api/clients':
+            self._api_get_clients(vendor_id)
+        elif path.startswith('/api/clients/'):
+            client_id = path.split('/')[-1]
+            self._api_get_client_detail(vendor_id, client_id)
+        elif path == '/api/orders':
+            self._api_get_orders(vendor_id)
+        elif path == '/api/orders/unpaid':
+            self._api_get_unpaid(vendor_id)
+        elif path == '/api/finance/summary':
+            self._api_get_finance(vendor_id)
+        elif path == '/api/finance/receivables':
+            self._api_get_receivables(vendor_id)
+        elif path == '/api/finance/margin':
+            self._api_get_margin(vendor_id)
+        elif path == '/api/pipeline':
+            self._api_get_pipeline(vendor_id)
         else:
             self._send_error(404, "API endpoint not found")
 
@@ -215,6 +232,20 @@ class AppHandler(BaseHTTPRequestHandler):
             self._api_register(vendor_id, body)
         elif path == '/api/products':
             self._api_add_product(vendor_id, body)
+        elif path == '/api/clients':
+            self._api_add_client(vendor_id, body)
+        elif path == '/api/orders':
+            self._api_add_order(vendor_id, body)
+        elif path == '/api/orders/deliver':
+            self._api_deliver_order(vendor_id, body)
+        elif path == '/api/orders/pay':
+            self._api_pay_order(vendor_id, body)
+        elif path == '/api/expenses':
+            self._api_add_expense(vendor_id, body)
+        elif path == '/api/notes':
+            self._api_add_note(vendor_id, body)
+        elif path == '/api/clients/search':
+            self._api_search_clients(vendor_id, body)
         else:
             self._send_error(404, "API endpoint not found")
 
@@ -332,6 +363,174 @@ class AppHandler(BaseHTTPRequestHandler):
             self._json_response({"product_id": product_id})
         except Exception as e:
             logger.error("Add product failed: %s", e)
+            self._send_error(500, str(e))
+
+    # ─────────────────────────────────────────────────────────────────
+    # CLIENTS API
+    # ─────────────────────────────────────────────────────────────────
+
+    def _api_get_clients(self, vendor_id):
+        from database import get_clients
+        clients = get_clients(vendor_id)
+        self._json_response({
+            "items": [dict(c) for c in clients] if clients else [],
+        })
+
+    def _api_get_client_detail(self, vendor_id, client_id):
+        from database import get_client_profile
+        try:
+            profile = get_client_profile(int(client_id), vendor_id)
+            self._json_response(profile)
+        except Exception as e:
+            self._send_error(404, str(e))
+
+    def _api_add_client(self, vendor_id, body):
+        from database import add_client
+        nombre = (body.get('nombre') or '').strip()
+        if not nombre:
+            self._send_error(400, "nombre is required")
+            return
+        try:
+            client_id = add_client(vendor_id, body)
+            self._json_response({"client_id": client_id})
+        except Exception as e:
+            logger.error("Add client failed: %s", e)
+            self._send_error(500, str(e))
+
+    def _api_search_clients(self, vendor_id, body):
+        from database import search_clients
+        q = (body.get('query') or '').strip()
+        if not q:
+            self._send_error(400, "query is required")
+            return
+        results = search_clients(vendor_id, q)
+        self._json_response({
+            "items": [dict(c) for c in results] if results else [],
+        })
+
+    # ─────────────────────────────────────────────────────────────────
+    # ORDERS API
+    # ─────────────────────────────────────────────────────────────────
+
+    def _api_get_orders(self, vendor_id):
+        from database import get_orders
+        import urllib.parse as up
+        # Parse query params for status filter
+        qs = up.parse_qs(up.urlparse(self.path).query)
+        status = qs.get('status', [None])[0]
+        orders = get_orders(vendor_id, estado=status)
+        self._json_response({
+            "items": [dict(o) for o in orders] if orders else [],
+        })
+
+    def _api_add_order(self, vendor_id, body):
+        from database import add_order
+        required = ['cliente_id', 'producto', 'cantidad', 'precio_venta']
+        for field in required:
+            if not body.get(field):
+                self._send_error(400, f"{field} is required")
+                return
+        try:
+            order_id = add_order(
+                vendor_id,
+                body['cliente_id'],
+                body['producto'],
+                body['cantidad'],
+                body.get('precio_compra', 0),
+                body['precio_venta'],
+            )
+            self._json_response({"order_id": order_id})
+        except Exception as e:
+            logger.error("Add order failed: %s", e)
+            self._send_error(500, str(e))
+
+    def _api_deliver_order(self, vendor_id, body):
+        from database import deliver_order
+        order_id = body.get('order_id')
+        if not order_id:
+            self._send_error(400, "order_id is required")
+            return
+        try:
+            deliver_order(int(order_id), vendor_id)
+            self._json_response({"ok": True})
+        except Exception as e:
+            self._send_error(500, str(e))
+
+    def _api_pay_order(self, vendor_id, body):
+        from database import mark_order_paid
+        order_id = body.get('order_id')
+        if not order_id:
+            self._send_error(400, "order_id is required")
+            return
+        try:
+            mark_order_paid(int(order_id), vendor_id)
+            self._json_response({"ok": True})
+        except Exception as e:
+            self._send_error(500, str(e))
+
+    def _api_get_unpaid(self, vendor_id):
+        from database import get_unpaid_orders
+        orders = get_unpaid_orders(vendor_id)
+        self._json_response({
+            "items": [dict(o) for o in orders] if orders else [],
+        })
+
+    # ─────────────────────────────────────────────────────────────────
+    # FINANCE API
+    # ─────────────────────────────────────────────────────────────────
+
+    def _api_get_finance(self, vendor_id):
+        from database import get_finance_summary
+        summary = get_finance_summary(vendor_id)
+        self._json_response(summary)
+
+    def _api_get_receivables(self, vendor_id):
+        from database import get_receivables
+        items = get_receivables(vendor_id)
+        self._json_response({
+            "items": [dict(r) for r in items] if items else [],
+        })
+
+    def _api_get_margin(self, vendor_id):
+        from database import get_margin_analysis
+        analysis = get_margin_analysis(vendor_id)
+        self._json_response({
+            "items": [dict(a) for a in analysis] if analysis else [],
+        })
+
+    def _api_add_expense(self, vendor_id, body):
+        from database import add_expense
+        concepto = (body.get('concepto') or '').strip()
+        monto = body.get('monto', 0)
+        if not concepto or not monto:
+            self._send_error(400, "concepto and monto are required")
+            return
+        try:
+            expense_id = add_expense(vendor_id, concepto, float(monto))
+            self._json_response({"expense_id": expense_id})
+        except Exception as e:
+            self._send_error(500, str(e))
+
+    # ─────────────────────────────────────────────────────────────────
+    # PIPELINE & NOTES API
+    # ─────────────────────────────────────────────────────────────────
+
+    def _api_get_pipeline(self, vendor_id):
+        from database import get_pipeline_stats
+        stats = get_pipeline_stats(vendor_id)
+        self._json_response(stats)
+
+    def _api_add_note(self, vendor_id, body):
+        from database import add_note
+        cliente_id = body.get('cliente_id')
+        texto = (body.get('texto') or '').strip()
+        if not cliente_id or not texto:
+            self._send_error(400, "cliente_id and texto are required")
+            return
+        try:
+            note_id = add_note(vendor_id, int(cliente_id), texto)
+            self._json_response({"note_id": note_id})
+        except Exception as e:
             self._send_error(500, str(e))
 
     # ── MERCADO PAGO WEBHOOK (Sprint 4) ──

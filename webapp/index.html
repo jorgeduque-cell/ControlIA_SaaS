@@ -324,6 +324,80 @@
       </div>
     </section>
 
+    <!-- ═══ SCREEN: DATA LIST (Generic — clients, orders, products, etc.) ═══ -->
+    <section id="screen-data-list" class="screen" role="main" aria-label="Lista de datos">
+      <div class="module-detail">
+        <div class="module-detail__header">
+          <button class="module-detail__back" id="data-list-back" aria-label="Volver">←</button>
+          <div class="module-detail__info">
+            <h2 class="module-detail__title" id="data-list-title">Lista</h2>
+            <p class="module-detail__desc" id="data-list-subtitle"></p>
+          </div>
+        </div>
+
+        <!-- Search bar (optional, shown for searchable lists) -->
+        <div class="input-group w-full hidden" id="data-list-search-wrap">
+          <input type="text" id="data-list-search" class="input-group__input" placeholder=" " autocomplete="off">
+          <label class="input-group__label">🔍 Buscar...</label>
+        </div>
+
+        <!-- Items container -->
+        <div class="action-list" id="data-list-items">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Empty state -->
+        <div class="hidden" id="data-list-empty" style="text-align:center;padding:32px 16px;">
+          <div style="font-size:2.5rem;margin-bottom:12px;" id="data-list-empty-icon">📭</div>
+          <p style="color:var(--c-text-muted);" id="data-list-empty-text">No hay datos</p>
+        </div>
+
+        <!-- Add button (optional) -->
+        <button class="btn btn--primary w-full mt-md hidden" id="data-list-add-btn">
+          + Agregar Nuevo
+        </button>
+      </div>
+    </section>
+
+    <!-- ═══ SCREEN: DATA FORM (Generic — new client, order, expense, etc.) ═══ -->
+    <section id="screen-data-form" class="screen" role="form" aria-label="Formulario">
+      <div class="register">
+        <div class="module-detail__header">
+          <button class="module-detail__back" id="data-form-back" aria-label="Volver">←</button>
+          <div class="module-detail__info">
+            <h2 class="module-detail__title" id="data-form-title">Formulario</h2>
+            <p class="module-detail__desc" id="data-form-subtitle"></p>
+          </div>
+        </div>
+
+        <div class="glass-card glass-card--elevated" style="display:flex;flex-direction:column;gap:16px;">
+          <!-- Dynamic form fields populated by JS -->
+          <div id="data-form-fields"></div>
+
+          <button class="btn btn--primary w-full" id="data-form-submit">
+            <span id="data-form-submit-text">Guardar</span>
+            <div id="data-form-spinner" class="btn__spinner hidden"></div>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ SCREEN: DATA RESULT (Reports, summaries, confirmations) ═══ -->
+    <section id="screen-data-result" class="screen" role="main" aria-label="Resultado">
+      <div class="module-detail">
+        <div class="module-detail__header">
+          <button class="module-detail__back" id="data-result-back" aria-label="Volver">←</button>
+          <div class="module-detail__info">
+            <h2 class="module-detail__title" id="data-result-title">Resultado</h2>
+          </div>
+        </div>
+
+        <div id="data-result-content">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </section>
+
   </div>
 
   <!-- ═══ TOAST ═══ -->
