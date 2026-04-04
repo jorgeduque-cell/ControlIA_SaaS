@@ -28,7 +28,8 @@ var MODULES = {
       { icon: '✅', label: 'Marcar Entregado', cmd: 'entregar' },
       { icon: '💳', label: 'Cobros Pendientes', cmd: 'cobrar' },
       { icon: '💵', label: 'Marcar Pagado', cmd: 'pagar' },
-      { icon: '🔄', label: 'Repetir Último Pedido', cmd: 'repetir' }
+      { icon: '🔄', label: 'Repetir Último Pedido', cmd: 'repetir' },
+      { icon: '📲', label: 'Cobrar por WhatsApp', cmd: 'cobrar_whatsapp' }
     ]
   },
   documentos: {
@@ -38,7 +39,8 @@ var MODULES = {
       { icon: '📄', label: 'Generar Remisión', cmd: 'remision' },
       { icon: '🚛', label: 'Despacho de Mercancía', cmd: 'despacho' },
       { icon: '💰', label: 'Ver Lista de Precios', cmd: 'precios' },
-      { icon: '📋', label: 'Cotización', cmd: 'cotizar' }
+      { icon: '📋', label: 'Cotización PDF', cmd: 'cotizar' },
+      { icon: '📲', label: 'Cotizar por WhatsApp', cmd: 'cotizar_whatsapp' }
     ]
   },
   logistica: {
@@ -99,7 +101,15 @@ var API = {
   get: function(endpoint) {
     return fetch(this._baseUrl + endpoint, { headers: this._headers() })
       .then(function(resp) {
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        if (!resp.ok) {
+          return resp.json().catch(function() { return {}; }).then(function(errData) {
+            if (errData.expired) {
+              App._renderExpired();
+              App.showScreen('expired');
+            }
+            throw new Error(errData.message || 'HTTP ' + resp.status);
+          });
+        }
         return resp.json();
       });
   },
@@ -111,7 +121,15 @@ var API = {
       body: JSON.stringify(body)
     })
     .then(function(resp) {
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      if (!resp.ok) {
+        return resp.json().catch(function() { return {}; }).then(function(errData) {
+          if (errData.expired) {
+            App._renderExpired();
+            App.showScreen('expired');
+          }
+          throw new Error(errData.message || 'HTTP ' + resp.status);
+        });
+      }
       return resp.json();
     });
   }
@@ -1251,6 +1269,80 @@ var CMD_HANDLERS = {
       .catch(function() {
         showToast('Error al generar la cotizacion', 'error');
       });
+  },
+
+  cotizar_whatsapp: function() {
+    App.showList({
+      title: '📲 Cotizar por WhatsApp',
+      subtitle: 'Selecciona un cliente para enviarle los precios',
+      apiEndpoint: '/api/clients',
+      emptyIcon: '👥',
+      emptyText: 'No hay clientes registrados',
+      renderItem: function(item) {
+        return {
+          icon: item.telefono ? '📱' : '👤',
+          title: item.nombre,
+          subtitle: item.telefono || 'Sin teléfono',
+          detail: item.tipo_negocio || ''
+        };
+      },
+      onItemClick: function(item) {
+        if (!item.telefono) {
+          showToast('Este cliente no tiene teléfono registrado', 'error');
+          haptic('error');
+          return;
+        }
+        showToast('📲 Preparando cotización...', 'info');
+        API.get('/api/whatsapp/cotizacion/' + item.id)
+          .then(function(res) {
+            if (res.url) {
+              haptic('success');
+              showToast('Abriendo WhatsApp con ' + res.products_count + ' productos...', 'info');
+              window.open(res.url, '_blank');
+            }
+          })
+          .catch(function(err) {
+            showToast(err.message || 'Error al generar cotización', 'error');
+          });
+      }
+    });
+  },
+
+  cobrar_whatsapp: function() {
+    App.showList({
+      title: '📲 Cobrar por WhatsApp',
+      subtitle: 'Selecciona un cliente para enviarle el recordatorio',
+      apiEndpoint: '/api/clients',
+      emptyIcon: '💳',
+      emptyText: 'No hay clientes registrados',
+      renderItem: function(item) {
+        return {
+          icon: item.telefono ? '📱' : '👤',
+          title: item.nombre,
+          subtitle: item.telefono || 'Sin teléfono',
+          detail: item.tipo_negocio || ''
+        };
+      },
+      onItemClick: function(item) {
+        if (!item.telefono) {
+          showToast('Este cliente no tiene teléfono registrado', 'error');
+          haptic('error');
+          return;
+        }
+        showToast('💳 Preparando cobro...', 'info');
+        API.get('/api/whatsapp/cobro/' + item.id)
+          .then(function(res) {
+            if (res.url) {
+              haptic('success');
+              showToast('Abriendo WhatsApp - Deuda: ' + formatCOP(res.total_debt), 'info');
+              window.open(res.url, '_blank');
+            }
+          })
+          .catch(function(err) {
+            showToast(err.message || 'El cliente no tiene deudas pendientes', 'error');
+          });
+      }
+    });
   },
 
   _showDocument: function(title, text) {

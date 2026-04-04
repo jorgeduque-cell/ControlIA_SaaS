@@ -392,6 +392,24 @@ def _deactivate_vendor(vendedor_id):
         conn.close()
 
 
+def update_subscription(vendedor_id, days=30):
+    """Activate vendor subscription for N days from today.
+    Called by MercadoPago webhook on successful payment.
+    Returns the new expiry date as ISO string."""
+    from datetime import timedelta
+    new_expiry = date.today() + timedelta(days=days)
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE vendedores SET estado = 'Activo', fecha_vencimiento = %s WHERE id = %s",
+            (new_expiry.isoformat(), vendedor_id),
+        )
+        conn.commit()
+        return new_expiry.isoformat()
+    finally:
+        conn.close()
+
+
 # =========================================================================
 # PRODUCTOS (Dynamic Catalog)
 # =========================================================================

@@ -25,7 +25,14 @@ import urllib.request
 from datetime import date, datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from config import TOKEN, TRIAL_DAYS, SUBSCRIPTION_PRICE_COP, logger
+from config import TOKEN, TRIAL_DAYS, SUBSCRIPTION_PRICE_COP, MERCADOPAGO_WEBHOOK_SECRET, logger
+
+# Viral footer injected into every generated PDF
+VIRAL_FOOTER = (
+    "\U0001F4C4 Documento generado con @controliasaasbot \u2014 "
+    "Organice sus cobros y rutas por $2,600/d\u00EDa. "
+    "Pru\u00E9belo 7 d\u00EDas gratis \u2192 t.me/controliasaasbot"
+)
 
 # Webapp directory (relative to this file)
 WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'webapp')
@@ -186,6 +193,38 @@ class AppHandler(BaseHTTPRequestHandler):
             logger.error("Static file error: %s", e)
             self._send_error(500, "Internal Server Error")
 
+    # ── SUBSCRIPTION GUARD (Kill Switch for API) ──
+
+    def _require_active_subscription(self, vendor_id):
+        """Check if vendor has active subscription. Returns True if active.
+        If expired, sends 403 and returns False.
+        Skipped for /api/vendor and /api/register (onboarding routes)."""
+        from database import get_vendedor, _deactivate_vendor
+        from database import safe_parse_date
+        vendedor = get_vendedor(vendor_id)
+        if not vendedor:
+            self._send_error(403, "No estas registrado. Usa /start en el bot.")
+            return False
+
+        estado = vendedor["estado"]
+        fecha_venc = safe_parse_date(vendedor.get("fecha_vencimiento"))
+
+        # Auto-deactivate expired vendors
+        if estado in ("Activo", "Prueba") and fecha_venc and fecha_venc < date.today():
+            _deactivate_vendor(vendor_id)
+            estado = "Inactivo"
+
+        if estado == "Inactivo":
+            fecha_str = fecha_venc.isoformat() if fecha_venc else "N/A"
+            self._json_response({
+                "error": "subscription_expired",
+                "message": f"Tu suscripcion vencio el {fecha_str}. Renueva para continuar.",
+                "expired": True,
+            }, 403)
+            return False
+
+        return True
+
     # ── API GET ROUTER ──
 
     def _route_api_get(self, path):
@@ -193,9 +232,16 @@ class AppHandler(BaseHTTPRequestHandler):
         if vendor_id is None:
             return  # Error already sent
 
+        # Onboarding routes — no subscription check
         if path == '/api/vendor':
             self._api_get_vendor(vendor_id)
-        elif path == '/api/dashboard':
+            return
+
+        # All other routes require active subscription
+        if not self._require_active_subscription(vendor_id):
+            return
+
+        if path == '/api/dashboard':
             self._api_get_dashboard(vendor_id)
         elif path == '/api/products':
             self._api_get_products(vendor_id)
@@ -218,6 +264,8 @@ class AppHandler(BaseHTTPRequestHandler):
             self._api_get_pipeline(vendor_id)
         elif path == '/api/backup':
             self._api_get_backup(vendor_id)
+        elif path.startswith('/api/whatsapp/'):
+            self._route_whatsapp_get(vendor_id, path)
         else:
             self._send_error(404, "API endpoint not found")
 
@@ -232,9 +280,16 @@ class AppHandler(BaseHTTPRequestHandler):
         if body is None:
             return
 
+        # Onboarding route — no subscription check
         if path == '/api/register':
             self._api_register(vendor_id, body)
-        elif path == '/api/products':
+            return
+
+        # All other routes require active subscription
+        if not self._require_active_subscription(vendor_id):
+            return
+
+        if path == '/api/products':
             self._api_add_product(vendor_id, body)
         elif path == '/api/clients':
             self._api_add_client(vendor_id, body)
@@ -767,6 +822,10 @@ class AppHandler(BaseHTTPRequestHandler):
             elements.append(Spacer(1, 8 * mm))
             elements.append(Paragraph(f"<b>TOTAL A PAGAR: {format_cop(total)}</b>", normal_style))
 
+            # Viral footer
+            viral_style = ParagraphStyle("Viral", parent=styles["Normal"], fontSize=6, textColor=colors.Color(0.4, 0.4, 0.4), fontName="Helvetica-Oblique", alignment=TA_CENTER, spaceBefore=10*mm)
+            elements.append(Paragraph(VIRAL_FOOTER, viral_style))
+
             doc.build(elements)
             buffer.seek(0)
 
@@ -871,6 +930,10 @@ class AppHandler(BaseHTTPRequestHandler):
             elements.append(Spacer(1, 5*mm))
             elements.append(Paragraph(f"<b>TOTAL: {format_cop(total)}</b>", ParagraphStyle("Tot", parent=styles["Normal"], fontSize=12, fontName="Helvetica-Bold")))
 
+            # Viral footer
+            viral_style = ParagraphStyle("DViral", parent=styles["Normal"], fontSize=6, textColor=colors.Color(0.4, 0.4, 0.4), fontName="Helvetica-Oblique", alignment=TA_CENTER, spaceBefore=10*mm)
+            elements.append(Paragraph(VIRAL_FOOTER, viral_style))
+
             doc.build(elements)
             buffer.seek(0)
 
@@ -950,6 +1013,10 @@ class AppHandler(BaseHTTPRequestHandler):
             elements.append(Spacer(1, 8*mm))
             elements.append(Paragraph("* Precios sujetos a cambio sin previo aviso", footer_style))
 
+            # Viral footer
+            viral_style = ParagraphStyle("CViral", parent=styles["Normal"], fontSize=6, textColor=colors.Color(0.4, 0.4, 0.4), fontName="Helvetica-Oblique", alignment=TA_CENTER, spaceBefore=8*mm)
+            elements.append(Paragraph(VIRAL_FOOTER, viral_style))
+
             doc.build(elements)
             buffer.seek(0)
 
@@ -1014,13 +1081,283 @@ class AppHandler(BaseHTTPRequestHandler):
             logger.error("Backup send error: %s", e)
             self._send_error(500, str(e))
 
-    # ── MERCADO PAGO WEBHOOK (Sprint 4) ──
+    # ── MERCADO PAGO WEBHOOK (HMAC Verified) ──
 
     def _webhook_mercadopago(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(b'{"status": "received"}')
+        """Process MercadoPago IPN webhook with HMAC signature verification.
+        Activates vendor subscription on successful payment."""
+        from database import update_subscription
+        from config import MERCADOPAGO_ACCESS_TOKEN
+
+        body = self._read_json_body()
+
+        # Always respond 200 to MercadoPago (they retry on non-200)
+        if not body:
+            self.send_response(200)
+            self.end_headers()
+            return
+
+        # ── HMAC SIGNATURE VERIFICATION ──
+        if MERCADOPAGO_WEBHOOK_SECRET:
+            x_signature = self.headers.get('x-signature', '')
+            x_request_id = self.headers.get('x-request-id', '')
+
+            # Parse ts and v1 from x-signature header
+            # Format: "ts=TIMESTAMP,v1=HASH"
+            sig_parts = {}
+            for part in x_signature.split(','):
+                if '=' in part:
+                    k, v = part.strip().split('=', 1)
+                    sig_parts[k] = v
+
+            ts = sig_parts.get('ts', '')
+            received_hash = sig_parts.get('v1', '')
+
+            if ts and received_hash:
+                # Build the manifest string for HMAC
+                data_id = body.get('data', {}).get('id', '')
+                manifest = f"id:{data_id};request-id:{x_request_id};ts:{ts};"
+                expected_hash = hmac.new(
+                    MERCADOPAGO_WEBHOOK_SECRET.encode(),
+                    manifest.encode(),
+                    hashlib.sha256,
+                ).hexdigest()
+
+                if not hmac.compare_digest(expected_hash, received_hash):
+                    logger.warning(
+                        "MercadoPago webhook HMAC mismatch — REJECTED. "
+                        "Expected: %s, Received: %s",
+                        expected_hash[:16], received_hash[:16],
+                    )
+                    self._json_response({"error": "Invalid signature"}, 403)
+                    return
+
+                logger.info("MercadoPago webhook HMAC verified successfully")
+            else:
+                logger.warning("MercadoPago webhook missing signature components")
+        else:
+            logger.warning("MERCADOPAGO_WEBHOOK_SECRET not configured — skipping HMAC")
+
+        # ── PROCESS PAYMENT ──
+        action = body.get('action', '')
+        topic = body.get('type', body.get('topic', ''))
+        data_id = body.get('data', {}).get('id', '')
+
+        logger.info(
+            "MercadoPago webhook: action=%s, type=%s, data_id=%s",
+            action, topic, data_id,
+        )
+
+        # Only process approved payments
+        if action == 'payment.created' or topic == 'payment':
+            if data_id and MERCADOPAGO_ACCESS_TOKEN:
+                try:
+                    # Fetch payment details from MercadoPago API
+                    payment_url = f"https://api.mercadopago.com/v1/payments/{data_id}"
+                    req = urllib.request.Request(
+                        payment_url,
+                        headers={"Authorization": f"Bearer {MERCADOPAGO_ACCESS_TOKEN}"},
+                    )
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        payment = json.loads(resp.read())
+
+                    if payment.get('status') == 'approved':
+                        # Extract vendor_id from external_reference
+                        ext_ref = payment.get('external_reference', '')
+                        amount = payment.get('transaction_amount', 0)
+
+                        if ext_ref:
+                            vendor_id = int(ext_ref)
+                            new_expiry = update_subscription(vendor_id, days=30)
+                            logger.info(
+                                "PAYMENT APPROVED — Vendor %s activated until %s "
+                                "(Amount: $%s COP)",
+                                vendor_id, new_expiry, amount,
+                            )
+
+                            # Notify vendor via Telegram
+                            try:
+                                msg = (
+                                    f"\u2705 <b>Pago confirmado!</b>\n\n"
+                                    f"Monto: ${amount:,.0f} COP\n"
+                                    f"Tu suscripcion esta activa hasta: <b>{new_expiry}</b>\n\n"
+                                    f"Gracias por confiar en ControlIA \U0001F680"
+                                )
+                                notify_url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+                                notify_data = json.dumps({
+                                    "chat_id": vendor_id,
+                                    "text": msg,
+                                    "parse_mode": "HTML",
+                                }).encode()
+                                notify_req = urllib.request.Request(
+                                    notify_url,
+                                    data=notify_data,
+                                    headers={"Content-Type": "application/json"},
+                                )
+                                urllib.request.urlopen(notify_req, timeout=10)
+                            except Exception as e:
+                                logger.error("Failed to notify vendor %s: %s", vendor_id, e)
+                        else:
+                            logger.warning("Payment approved but no external_reference")
+                    else:
+                        logger.info("Payment status: %s (not approved)", payment.get('status'))
+
+                except Exception as e:
+                    logger.error("Error processing MercadoPago payment: %s", e)
+
+        self._json_response({"status": "received"})
+
+    # ── WHATSAPP DEEP LINK API ──
+
+    def _route_whatsapp_get(self, vendor_id, path):
+        """Route WhatsApp API requests."""
+        # /api/whatsapp/cotizacion/{client_id}
+        # /api/whatsapp/cobro/{client_id}
+        parts = path.rstrip('/').split('/')
+        # Expected: ['', 'api', 'whatsapp', 'cotizacion', '123']
+        if len(parts) < 5:
+            self._send_error(400, "Client ID required")
+            return
+
+        action = parts[3]  # cotizacion or cobro
+        client_id = parts[4]
+
+        try:
+            client_id = int(client_id)
+        except ValueError:
+            self._send_error(400, "Invalid client ID")
+            return
+
+        if action == 'cotizacion':
+            self._api_whatsapp_cotizacion(vendor_id, client_id)
+        elif action == 'cobro':
+            self._api_whatsapp_cobro(vendor_id, client_id)
+        else:
+            self._send_error(404, "Unknown WhatsApp action")
+
+    def _format_phone_co(self, phone):
+        """Normalize Colombian phone to international format (573XXXXXXXXX)."""
+        if not phone:
+            return None
+        phone = phone.strip().replace(' ', '').replace('-', '').replace('+', '')
+        if phone.startswith('57') and len(phone) == 12:
+            return phone  # Already international
+        if phone.startswith('3') and len(phone) == 10:
+            return '57' + phone  # Add country code
+        if phone.startswith('0'):
+            return '57' + phone[1:]  # Remove leading 0, add 57
+        return '57' + phone  # Default: prepend 57
+
+    def _api_whatsapp_cotizacion(self, vendor_id, client_id):
+        """GET /api/whatsapp/cotizacion/{client_id} — Generate WhatsApp price list link."""
+        from database import get_vendedor, get_client, get_products
+        from utils import format_cop
+
+        try:
+            vendedor = get_vendedor(vendor_id)
+            client = get_client(client_id, vendor_id)
+            products = get_products(vendor_id)
+            priced = [p for p in products if p.get('precio_venta', 0) > 0]
+
+            if not client:
+                self._send_error(404, "Cliente no encontrado")
+                return
+            if not client.get('telefono'):
+                self._send_error(400, "El cliente no tiene telefono registrado")
+                return
+            if not priced:
+                self._send_error(400, "No hay productos con precio configurado")
+                return
+
+            nombre_negocio = vendedor['nombre_negocio'] if vendedor else 'Mi Negocio'
+            client_name = client.get('nombre', 'Cliente')
+            phone = self._format_phone_co(client['telefono'])
+
+            # Build price list message
+            lines = []
+            lines.append(f"Hola {client_name}! Le saluda {nombre_negocio}.")
+            lines.append("")
+            lines.append("Le comparto nuestra lista de precios:")
+            lines.append("")
+            for i, p in enumerate(priced, 1):
+                lines.append(f"{i}. {p['nombre']} — {format_cop(p['precio_venta'])}")
+            lines.append("")
+            lines.append("Hagame su pedido y se lo llevo!")
+            lines.append(f"\n{VIRAL_FOOTER}")
+
+            message = '\n'.join(lines)
+            wa_url = f"https://wa.me/{phone}?text={urllib.parse.quote(message)}"
+
+            self._json_response({
+                "ok": True,
+                "url": wa_url,
+                "client_name": client_name,
+                "phone": phone,
+                "products_count": len(priced),
+            })
+        except Exception as e:
+            logger.error("WhatsApp cotizacion error: %s", e)
+            self._send_error(500, str(e))
+
+    def _api_whatsapp_cobro(self, vendor_id, client_id):
+        """GET /api/whatsapp/cobro/{client_id} — Generate WhatsApp payment reminder link."""
+        from database import get_vendedor, get_client, get_orders
+        from utils import format_cop
+
+        try:
+            vendedor = get_vendedor(vendor_id)
+            client = get_client(client_id, vendor_id)
+
+            if not client:
+                self._send_error(404, "Cliente no encontrado")
+                return
+            if not client.get('telefono'):
+                self._send_error(400, "El cliente no tiene telefono registrado")
+                return
+
+            nombre_negocio = vendedor['nombre_negocio'] if vendedor else 'Mi Negocio'
+            client_name = client.get('nombre', 'Cliente')
+            phone = self._format_phone_co(client['telefono'])
+
+            # Get unpaid orders for this client
+            all_orders = get_orders(vendor_id)
+            unpaid = [o for o in all_orders
+                      if o.get('cliente_id') == client_id
+                      and o.get('estado_pago') == 'Pendiente']
+
+            if not unpaid:
+                self._send_error(400, "Este cliente no tiene deudas pendientes")
+                return
+
+            total = sum(o['cantidad'] * o['precio_venta'] for o in unpaid)
+
+            lines = []
+            lines.append(f"Hola {client_name}, le saluda {nombre_negocio}.")
+            lines.append("")
+            lines.append("Le escribo para recordarle su cuenta pendiente:")
+            lines.append("")
+            for o in unpaid:
+                subtotal = o['cantidad'] * o['precio_venta']
+                lines.append(f"- {o['producto']} x{o['cantidad']} = {format_cop(subtotal)}")
+            lines.append("")
+            lines.append(f"*TOTAL PENDIENTE: {format_cop(total)}*")
+            lines.append("")
+            lines.append("Le agradezco si puede ponerse al dia. Cualquier duda me avisa!")
+
+            message = '\n'.join(lines)
+            wa_url = f"https://wa.me/{phone}?text={urllib.parse.quote(message)}"
+
+            self._json_response({
+                "ok": True,
+                "url": wa_url,
+                "client_name": client_name,
+                "phone": phone,
+                "total_debt": total,
+                "orders_count": len(unpaid),
+            })
+        except Exception as e:
+            logger.error("WhatsApp cobro error: %s", e)
+            self._send_error(500, str(e))
 
     # ─────────────────────────────────────────────────────────────────
     # HELPERS
