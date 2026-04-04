@@ -348,9 +348,10 @@ var App = {
         spawnConfetti();
         App.showScreen('success');
       })
-      .catch(function() {
+      .catch(function(err) {
         haptic('error');
-        showToast('Error al crear la cuenta. Intenta de nuevo.', 'error');
+        console.error('Registration error:', err);
+        showToast('Error al crear la cuenta: ' + (err.message || 'Intenta de nuevo.'), 'error');
       })
       .finally(function() {
         if (btnText) btnText.classList.remove('hidden');
