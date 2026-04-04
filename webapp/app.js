@@ -368,17 +368,10 @@ var App = {
       var mod = MODULES[key];
       var card = document.createElement('div');
       card.className = 'module-card';
-      card.style.cssText = 'cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:rgba(108,60,225,0.2);';
-      card.innerHTML = '<div class="module-card__icon">' + mod.icon + '</div>' +
-        '<span class="module-card__title">' + mod.title + '</span>' +
-        '<span class="module-card__desc">' + mod.desc + '</span>';
-
-      card.addEventListener('click', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        App.openModule(key);
-      });
-
+      card.setAttribute('onclick', 'App.openModule("' + key + '")');
+      card.innerHTML = '<div class="module-card__icon" style="pointer-events:none">' + mod.icon + '</div>' +
+        '<span class="module-card__title" style="pointer-events:none">' + mod.title + '</span>' +
+        '<span class="module-card__desc" style="pointer-events:none">' + mod.desc + '</span>';
       grid.appendChild(card);
     });
 
@@ -434,17 +427,10 @@ var App = {
     mod.commands.forEach(function(cmd) {
       var item = document.createElement('div');
       item.className = 'action-item';
-      item.style.cssText = 'cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:rgba(108,60,225,0.2);user-select:none;-webkit-user-select:none;';
-      item.innerHTML = '<span class="action-item__icon">' + cmd.icon + '</span>' +
-        '<span class="action-item__label">' + cmd.label + '</span>' +
-        '<span class="action-item__arrow">→</span>';
-
-      item.addEventListener('click', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        App.executeCommand(cmd.cmd);
-      });
-
+      item.setAttribute('onclick', 'App.executeCommand("' + cmd.cmd + '")');
+      item.innerHTML = '<span class="action-item__icon" style="pointer-events:none">' + cmd.icon + '</span>' +
+        '<span class="action-item__label" style="pointer-events:none">' + cmd.label + '</span>' +
+        '<span class="action-item__arrow" style="pointer-events:none">→</span>';
       list.appendChild(item);
     });
 
