@@ -333,7 +333,7 @@ def register_vendedor(vendedor_id, nombre_negocio, telefono_soporte=""):
 
 def update_vendedor(vendedor_id, **fields):
     """Update vendor fields. Only whitelisted columns are allowed."""
-    allowed = {"nombre_negocio", "telefono_soporte", "estado", "fecha_vencimiento"}
+    allowed = {"nombre_negocio", "telefono_soporte", "estado", "fecha_vencimiento", "meta_mensual"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return

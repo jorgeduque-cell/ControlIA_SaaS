@@ -16,11 +16,13 @@ Routes:
 """
 import hashlib
 import hmac
+import io
 import json
 import os
 import threading
 import urllib.parse
-from datetime import date
+import urllib.request
+from datetime import date, datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from config import TOKEN, TRIAL_DAYS, SUBSCRIPTION_PRICE_COP, logger
@@ -256,6 +258,14 @@ class AppHandler(BaseHTTPRequestHandler):
             self._api_set_meta(vendor_id, body)
         elif path.startswith('/api/delete/'):
             self._api_delete_record(vendor_id, path, body)
+        elif path == '/api/documents/remision':
+            self._api_generate_remision(vendor_id, body)
+        elif path == '/api/documents/despacho':
+            self._api_generate_despacho(vendor_id, body)
+        elif path == '/api/documents/cotizacion':
+            self._api_generate_cotizacion(vendor_id)
+        elif path == '/api/documents/backup':
+            self._api_generate_backup(vendor_id)
         else:
             self._send_error(404, "API endpoint not found")
 
@@ -635,6 +645,373 @@ class AppHandler(BaseHTTPRequestHandler):
                 return
             self._json_response({"ok": True, "deleted": record_type, "id": record_id})
         except Exception as e:
+            self._send_error(500, str(e))
+
+    # ── DOCUMENT PDF GENERATION (sent via Telegram Bot API) ──
+
+    def _send_pdf_to_telegram(self, chat_id, pdf_buffer, filename, caption):
+        """Send a PDF file to a Telegram chat using Bot API."""
+        try:
+            url = f"https://api.telegram.org/bot{TOKEN}/sendDocument"
+            boundary = '----FormBoundary7MA4YWxkTrZu0gW'
+            pdf_data = pdf_buffer.getvalue()
+
+            body_parts = []
+            # chat_id field
+            body_parts.append(f'--{boundary}'.encode())
+            body_parts.append(b'Content-Disposition: form-data; name="chat_id"')
+            body_parts.append(b'')
+            body_parts.append(str(chat_id).encode())
+            # caption field
+            body_parts.append(f'--{boundary}'.encode())
+            body_parts.append(b'Content-Disposition: form-data; name="caption"')
+            body_parts.append(b'')
+            body_parts.append(caption.encode('utf-8'))
+            # document field
+            body_parts.append(f'--{boundary}'.encode())
+            body_parts.append(f'Content-Disposition: form-data; name="document"; filename="{filename}"'.encode())
+            body_parts.append(b'Content-Type: application/pdf')
+            body_parts.append(b'')
+            body_parts.append(pdf_data)
+            # close
+            body_parts.append(f'--{boundary}--'.encode())
+
+            body = b'\r\n'.join(body_parts)
+            req = urllib.request.Request(
+                url, data=body,
+                headers={'Content-Type': f'multipart/form-data; boundary={boundary}'}
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read())
+                return result.get('ok', False)
+        except Exception as e:
+            logger.error("Failed to send PDF to Telegram: %s", e)
+            return False
+
+    def _api_generate_remision(self, vendor_id, body):
+        """POST /api/documents/remision — Generate remision PDF and send to chat."""
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.units import mm
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.enums import TA_CENTER
+        from database import get_vendedor, get_order
+        from utils import format_cop
+
+        order_id = body.get('order_id')
+        if not order_id:
+            self._send_error(400, "order_id is required")
+            return
+
+        try:
+            order_id = int(order_id)
+            vendedor = get_vendedor(vendor_id)
+            order = get_order(order_id, vendor_id)
+
+            if not order:
+                self._send_error(404, "Pedido no encontrado")
+                return
+
+            nombre = vendedor['nombre_negocio'] if vendedor else 'Mi Negocio'
+            total = order['cantidad'] * order['precio_venta']
+
+            buffer = io.BytesIO()
+            page_w, page_h = 140 * mm, 216 * mm
+            doc = SimpleDocTemplate(
+                buffer, pagesize=(page_w, page_h),
+                leftMargin=10*mm, rightMargin=10*mm,
+                topMargin=10*mm, bottomMargin=10*mm,
+            )
+
+            styles = getSampleStyleSheet()
+            title_style = ParagraphStyle("RemTitle", parent=styles["Title"], fontSize=14, alignment=TA_CENTER)
+            normal_style = ParagraphStyle("RemNormal", parent=styles["Normal"], fontSize=9)
+
+            fecha_str = date.today().isoformat()
+            elements = []
+            elements.append(Paragraph(f"REMISION {nombre}", title_style))
+            elements.append(Spacer(1, 5 * mm))
+
+            data = [
+                ["Remision No.", str(order_id), "Fecha", fecha_str],
+                ["Cliente", order.get("cliente_nombre", ""), "Direccion", order.get("cliente_dir") or ""],
+                ["Telefono", order.get("cliente_tel") or "", "", ""],
+            ]
+            t = Table(data, colWidths=[25*mm, 35*mm, 25*mm, 35*mm])
+            t.setStyle(TableStyle([
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("BACKGROUND", (0, 0), (0, -1), colors.Color(0.9, 0.9, 0.9)),
+                ("BACKGROUND", (2, 0), (2, -1), colors.Color(0.9, 0.9, 0.9)),
+            ]))
+            elements.append(t)
+            elements.append(Spacer(1, 5 * mm))
+
+            detail_data = [
+                ["Producto", "Cantidad", "Precio Unit.", "Total"],
+                [order["producto"], str(order["cantidad"]), format_cop(order["precio_venta"]), format_cop(total)],
+            ]
+            dt = Table(detail_data, colWidths=[40*mm, 25*mm, 25*mm, 30*mm])
+            dt.setStyle(TableStyle([
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.Color(0.85, 0.85, 0.85)),
+            ]))
+            elements.append(dt)
+            elements.append(Spacer(1, 8 * mm))
+            elements.append(Paragraph(f"<b>TOTAL A PAGAR: {format_cop(total)}</b>", normal_style))
+
+            doc.build(elements)
+            buffer.seek(0)
+
+            safe_name = nombre.replace(" ", "_")
+            filename = f"Remision_{order_id}_{safe_name}.pdf"
+            caption = f"Remision #{order_id} - {order.get('cliente_nombre', '')} - {format_cop(total)}"
+
+            sent = self._send_pdf_to_telegram(vendor_id, buffer, filename, caption)
+            if sent:
+                self._json_response({"ok": True, "message": "PDF enviado al chat", "filename": filename})
+            else:
+                self._send_error(500, "No se pudo enviar el PDF al chat")
+        except Exception as e:
+            logger.error("Remision PDF error: %s", e)
+            self._send_error(500, str(e))
+
+    def _api_generate_despacho(self, vendor_id, body):
+        """POST /api/documents/despacho — Generate despacho PDF and send to chat."""
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.units import mm
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.enums import TA_CENTER
+        from database import get_vendedor, get_order
+        from utils import format_cop
+
+        order_id = body.get('order_id')
+        if not order_id:
+            self._send_error(400, "order_id is required")
+            return
+
+        try:
+            order_id = int(order_id)
+            vendedor = get_vendedor(vendor_id)
+            order = get_order(order_id, vendor_id)
+
+            if not order:
+                self._send_error(404, "Pedido no encontrado")
+                return
+
+            nombre = vendedor['nombre_negocio'] if vendedor else 'Mi Negocio'
+            total = order['cantidad'] * order['precio_venta']
+            now = datetime.now()
+            today_str = now.strftime("%d/%m/%Y")
+            dispatch_id = now.strftime("%Y%m%d%H%M")
+
+            buffer = io.BytesIO()
+            doc = SimpleDocTemplate(
+                buffer, pagesize=letter,
+                leftMargin=15*mm, rightMargin=15*mm,
+                topMargin=12*mm, bottomMargin=12*mm,
+            )
+
+            styles = getSampleStyleSheet()
+            brand_color = colors.Color(0.15, 0.45, 0.15)
+            brand_bg = colors.Color(0.85, 0.95, 0.85)
+            brand_header = colors.Color(0.2, 0.5, 0.2)
+
+            title_style = ParagraphStyle("DTitle", parent=styles["Title"], fontSize=16, alignment=TA_CENTER, fontName="Helvetica-Bold")
+            company_style = ParagraphStyle("DCompany", parent=styles["Normal"], fontSize=14, alignment=TA_CENTER, fontName="Helvetica-Bold")
+            section_style = ParagraphStyle("DSection", parent=styles["Normal"], fontSize=9, spaceBefore=4*mm, fontName="Helvetica-Bold", textColor=colors.white, backColor=brand_header, leftIndent=2*mm, borderPadding=2)
+
+            full_width = letter[0] - 30 * mm
+            half_width = full_width / 2
+
+            green_grid = TableStyle([
+                ("GRID", (0, 0), (-1, -1), 0.5, brand_color),
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ])
+
+            elements = []
+            elements.append(Paragraph(f"<b>{nombre}</b>", company_style))
+            elements.append(Spacer(1, 4*mm))
+            elements.append(Paragraph("<b>DESPACHO DE MERCANCIA</b>", title_style))
+            elements.append(Spacer(1, 3*mm))
+
+            t1 = Table([
+                [f"No. Remision: {dispatch_id}", f"Fecha: {today_str}"],
+                [f"Cliente: {order.get('cliente_nombre', '')}", f"Direccion: {order.get('cliente_dir') or ''}"],
+            ], colWidths=[half_width, half_width])
+            t1.setStyle(green_grid)
+            elements.append(t1)
+            elements.append(Spacer(1, 4*mm))
+
+            elements.append(Paragraph("  DETALLE DE MERCANCIA", section_style))
+            detail = [
+                ["Producto", "Cantidad", "Precio Unit.", "Total"],
+                [order["producto"], str(order["cantidad"]), format_cop(order["precio_venta"]), format_cop(total)],
+            ]
+            dt = Table(detail, colWidths=[full_width*0.40, full_width*0.20, full_width*0.20, full_width*0.20])
+            dt.setStyle(TableStyle([
+                ("GRID", (0, 0), (-1, -1), 0.5, brand_color),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+                ("BACKGROUND", (0, 0), (-1, 0), brand_bg),
+            ]))
+            elements.append(dt)
+            elements.append(Spacer(1, 5*mm))
+            elements.append(Paragraph(f"<b>TOTAL: {format_cop(total)}</b>", ParagraphStyle("Tot", parent=styles["Normal"], fontSize=12, fontName="Helvetica-Bold")))
+
+            doc.build(elements)
+            buffer.seek(0)
+
+            safe_name = nombre.replace(" ", "_")
+            filename = f"Despacho_{safe_name}_{dispatch_id}.pdf"
+            caption = f"Despacho {nombre} - {order.get('cliente_nombre', '')} - {format_cop(total)}"
+
+            sent = self._send_pdf_to_telegram(vendor_id, buffer, filename, caption)
+            if sent:
+                self._json_response({"ok": True, "message": "PDF enviado al chat", "filename": filename})
+            else:
+                self._send_error(500, "No se pudo enviar el PDF al chat")
+        except Exception as e:
+            logger.error("Despacho PDF error: %s", e)
+            self._send_error(500, str(e))
+
+    def _api_generate_cotizacion(self, vendor_id):
+        """POST /api/documents/cotizacion — Generate price list PDF and send to chat."""
+        from reportlab.lib.units import mm
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.enums import TA_CENTER
+        from database import get_vendedor, get_products
+        from utils import format_cop
+
+        try:
+            vendedor = get_vendedor(vendor_id)
+            products = get_products(vendor_id)
+            priced = [p for p in products if p.get('precio_venta', 0) > 0]
+
+            if not priced:
+                self._send_error(400, "No hay productos con precio configurado")
+                return
+
+            nombre = vendedor['nombre_negocio'] if vendedor else 'Mi Negocio'
+            today_str = datetime.now().strftime("%d/%m/%Y")
+
+            buffer = io.BytesIO()
+            page_w, page_h = 140 * mm, 200 * mm
+            doc = SimpleDocTemplate(
+                buffer, pagesize=(page_w, page_h),
+                leftMargin=10*mm, rightMargin=10*mm,
+                topMargin=10*mm, bottomMargin=10*mm,
+            )
+
+            styles = getSampleStyleSheet()
+            brand_blue = colors.Color(0.1, 0.3, 0.6)
+            brand_bg = colors.Color(0.85, 0.9, 1.0)
+
+            title_style = ParagraphStyle("PT", parent=styles["Title"], fontSize=14, alignment=TA_CENTER, fontName="Helvetica-Bold")
+            sub_style = ParagraphStyle("PS", parent=styles["Normal"], fontSize=9, alignment=TA_CENTER, textColor=colors.gray)
+            footer_style = ParagraphStyle("PF", parent=styles["Normal"], fontSize=7, alignment=TA_CENTER, textColor=colors.gray, fontName="Helvetica-Oblique")
+
+            elements = []
+            elements.append(Paragraph(f"<b>{nombre}</b>", title_style))
+            elements.append(Spacer(1, 3*mm))
+            elements.append(Paragraph("<b>LISTA DE PRECIOS</b>", ParagraphStyle("PLT", parent=styles["Title"], fontSize=16, alignment=TA_CENTER, textColor=brand_blue)))
+            elements.append(Paragraph(f"Vigente: {today_str}", sub_style))
+            elements.append(Spacer(1, 5*mm))
+
+            table_data = [["Producto", "Presentacion", "Precio Unitario"]]
+            for p in priced:
+                table_data.append([p["nombre"], "Unidad", format_cop(p["precio_venta"])])
+
+            full_width = page_w - 20*mm
+            t = Table(table_data, colWidths=[full_width*0.45, full_width*0.25, full_width*0.30])
+            t.setStyle(TableStyle([
+                ("GRID", (0, 0), (-1, -1), 0.5, brand_blue),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 10),
+                ("ALIGN", (2, 0), (2, -1), "RIGHT"),
+                ("BACKGROUND", (0, 0), (-1, 0), brand_bg),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.Color(0.95, 0.95, 0.95)]),
+            ]))
+            elements.append(t)
+            elements.append(Spacer(1, 8*mm))
+            elements.append(Paragraph("* Precios sujetos a cambio sin previo aviso", footer_style))
+
+            doc.build(elements)
+            buffer.seek(0)
+
+            safe_name = nombre.replace(" ", "_")
+            filename = f"Precios_{safe_name}_{datetime.now().strftime('%Y%m%d')}.pdf"
+            caption = f"Lista de Precios - {nombre} - {today_str}"
+
+            sent = self._send_pdf_to_telegram(vendor_id, buffer, filename, caption)
+            if sent:
+                self._json_response({"ok": True, "message": "PDF enviado al chat", "filename": filename})
+            else:
+                self._send_error(500, "No se pudo enviar el PDF al chat")
+        except Exception as e:
+            logger.error("Cotizacion PDF error: %s", e)
+            self._send_error(500, str(e))
+
+    def _api_generate_backup(self, vendor_id):
+        """POST /api/documents/backup — Generate backup JSON and send to chat."""
+        from database import get_backup_data
+        try:
+            backup = get_backup_data(vendor_id)
+            text = json.dumps(backup, default=str, ensure_ascii=False, indent=2)
+            pdf_buffer = io.BytesIO(text.encode('utf-8'))
+
+            today_str = date.today().isoformat()
+            filename = f"controlia_backup_{today_str}.json"
+            caption = f"Respaldo ControlIA - {today_str}"
+
+            # Send JSON file directly (not PDF)
+            url = f"https://api.telegram.org/bot{TOKEN}/sendDocument"
+            boundary = '----FormBoundary7MA4YWxkTrZu0gW'
+            file_data = pdf_buffer.getvalue()
+
+            body_parts = []
+            body_parts.append(f'--{boundary}'.encode())
+            body_parts.append(b'Content-Disposition: form-data; name="chat_id"')
+            body_parts.append(b'')
+            body_parts.append(str(vendor_id).encode())
+            body_parts.append(f'--{boundary}'.encode())
+            body_parts.append(b'Content-Disposition: form-data; name="caption"')
+            body_parts.append(b'')
+            body_parts.append(caption.encode('utf-8'))
+            body_parts.append(f'--{boundary}'.encode())
+            body_parts.append(f'Content-Disposition: form-data; name="document"; filename="{filename}"'.encode())
+            body_parts.append(b'Content-Type: application/json')
+            body_parts.append(b'')
+            body_parts.append(file_data)
+            body_parts.append(f'--{boundary}--'.encode())
+
+            body = b'\r\n'.join(body_parts)
+            req = urllib.request.Request(
+                url, data=body,
+                headers={'Content-Type': f'multipart/form-data; boundary={boundary}'}
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read())
+                if result.get('ok'):
+                    self._json_response({"ok": True, "message": "Respaldo enviado al chat"})
+                else:
+                    self._send_error(500, "No se pudo enviar el respaldo")
+        except Exception as e:
+            logger.error("Backup send error: %s", e)
             self._send_error(500, str(e))
 
     # ── MERCADO PAGO WEBHOOK (Sprint 4) ──

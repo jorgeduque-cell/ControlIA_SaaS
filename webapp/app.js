@@ -1180,11 +1180,11 @@ var CMD_HANDLERS = {
     }).catch(function() { showToast('Error al cargar clientes', 'error'); });
   },
 
-  // ── Documentos ──
+  // ── Documentos (PDF via Telegram) ──
   remision: function() {
     App.showList({
-      title: '📄 Generar Remisión',
-      subtitle: 'Selecciona un pedido',
+      title: '📄 Generar Remision PDF',
+      subtitle: 'Selecciona un pedido para generar la remision',
       apiEndpoint: '/api/orders',
       emptyIcon: '📄',
       emptyText: 'No hay pedidos registrados',
@@ -1197,26 +1197,24 @@ var CMD_HANDLERS = {
         };
       },
       onItemClick: function(item) {
-        var lines = [];
-        lines.push('=== REMISION ===');
-        lines.push('Fecha: ' + new Date().toLocaleDateString('es-CO'));
-        lines.push('');
-        lines.push('Cliente: ' + (item.cliente_nombre || 'N/A'));
-        lines.push('Producto: ' + item.producto);
-        lines.push('Cantidad: ' + item.cantidad);
-        lines.push('Precio: ' + formatCOP(item.precio_venta));
-        lines.push('Total: ' + formatCOP(item.precio_venta * item.cantidad));
-        lines.push('Estado: ' + item.estado);
-        lines.push('================');
-        CMD_HANDLERS._showDocument('📄 Remisión', lines.join('\n'));
+        showToast('📄 Generando PDF...', 'info');
+        API.post('/api/documents/remision', { order_id: item.id })
+          .then(function(res) {
+            haptic('success');
+            showToast('📄 ' + (res.message || 'PDF enviado al chat'), 'info');
+            popNav();
+          })
+          .catch(function() {
+            showToast('Error al generar la remision', 'error');
+          });
       }
     });
   },
 
   despacho: function() {
     App.showList({
-      title: '🚛 Despacho de Mercancía',
-      subtitle: 'Selecciona un pedido',
+      title: '🚛 Despacho PDF',
+      subtitle: 'Selecciona un pedido para el despacho',
       apiEndpoint: '/api/orders?status=Pendiente',
       emptyIcon: '🚛',
       emptyText: 'No hay pedidos pendientes',
@@ -1229,40 +1227,30 @@ var CMD_HANDLERS = {
         };
       },
       onItemClick: function(item) {
-        var lines = [];
-        lines.push('=== DESPACHO DE MERCANCIA ===');
-        lines.push('Fecha: ' + new Date().toLocaleDateString('es-CO'));
-        lines.push('');
-        lines.push('Cliente: ' + (item.cliente_nombre || 'N/A'));
-        lines.push('Direccion: ' + (item.direccion || 'N/A'));
-        lines.push('Producto: ' + item.producto);
-        lines.push('Cantidad: ' + item.cantidad);
-        lines.push('Precio: ' + formatCOP(item.precio_venta));
-        lines.push('Total: ' + formatCOP(item.precio_venta * item.cantidad));
-        lines.push('=============================');
-        CMD_HANDLERS._showDocument('🚛 Despacho', lines.join('\n'));
+        showToast('🚛 Generando PDF de despacho...', 'info');
+        API.post('/api/documents/despacho', { order_id: item.id })
+          .then(function(res) {
+            haptic('success');
+            showToast('🚛 ' + (res.message || 'PDF enviado al chat'), 'info');
+            popNav();
+          })
+          .catch(function() {
+            showToast('Error al generar el despacho', 'error');
+          });
       }
     });
   },
 
   cotizar: function() {
-    API.get('/api/products').then(function(data) {
-      var products = data.products || [];
-      if (products.length === 0) { showToast('No hay productos en el catálogo', 'error'); return; }
-      var lines = [];
-      lines.push('=== COTIZACION ===');
-      lines.push('Fecha: ' + new Date().toLocaleDateString('es-CO'));
-      lines.push('');
-      var total = 0;
-      products.forEach(function(p, i) {
-        lines.push((i + 1) + '. ' + p.nombre + ' -- ' + formatCOP(p.precio_venta));
-        total += (p.precio_venta || 0);
+    showToast('📋 Generando cotizacion PDF...', 'info');
+    API.post('/api/documents/cotizacion', {})
+      .then(function(res) {
+        haptic('success');
+        showToast('📋 ' + (res.message || 'PDF enviado al chat'), 'info');
+      })
+      .catch(function() {
+        showToast('Error al generar la cotizacion', 'error');
       });
-      lines.push('');
-      lines.push('Total catalogo: ' + formatCOP(total));
-      lines.push('=================');
-      CMD_HANDLERS._showDocument('📋 Cotización', lines.join('\n'));
-    }).catch(function() { showToast('Error al cargar productos', 'error'); });
   },
 
   _showDocument: function(title, text) {
@@ -1312,7 +1300,7 @@ var CMD_HANDLERS = {
     document.body.removeChild(ta);
   },
 
-  // ── Logistica ──
+
   inventario: function() {
     App.showList({
       title: '📦 Control de Inventario',
@@ -1499,11 +1487,13 @@ var CMD_HANDLERS = {
   },
 
   backup: function() {
-    showToast('Generando respaldo...', 'info');
-    API.get('/api/backup').then(function(data) {
-      var text = JSON.stringify(data.backup, null, 2);
-      CMD_HANDLERS._showDocument('💾 Respaldo de Datos', text);
-    }).catch(function() { showToast('Error al generar respaldo', 'error'); });
+    showToast('💾 Generando respaldo...', 'info');
+    API.post('/api/documents/backup', {})
+      .then(function(res) {
+        haptic('success');
+        showToast('💾 ' + (res.message || 'Respaldo enviado al chat'), 'info');
+      })
+      .catch(function() { showToast('Error al generar respaldo', 'error'); });
   }
 };
 
