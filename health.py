@@ -455,6 +455,13 @@ class AppHandler(BaseHTTPRequestHandler):
         from database import get_client_profile
         try:
             profile = get_client_profile(int(client_id), vendor_id)
+            if not profile:
+                self._send_error(404, "Cliente no encontrado")
+                return
+            # Flatten totals into top-level for frontend
+            totals = profile.get('totals') or {}
+            profile['orders_count'] = totals.get('num_pedidos', 0)
+            profile['total_purchases'] = totals.get('total_vendido', 0)
             self._json_response(profile)
         except Exception as e:
             self._send_error(404, str(e))
@@ -546,32 +553,64 @@ class AppHandler(BaseHTTPRequestHandler):
     def _api_get_unpaid(self, vendor_id):
         from database import get_unpaid_orders
         orders = get_unpaid_orders(vendor_id)
-        self._json_response({
-            "items": [dict(o) for o in orders] if orders else [],
-        })
+        # Map DB field names to what frontend expects
+        items = []
+        if orders:
+            for o in orders:
+                row = dict(o)
+                # get_unpaid returns c.nombre, frontend expects cliente_nombre
+                if 'nombre' in row and 'cliente_nombre' not in row:
+                    row['cliente_nombre'] = row['nombre']
+                items.append(row)
+        self._json_response({"items": items})
 
     # ─────────────────────────────────────────────────────────────────
     # FINANCE API
     # ─────────────────────────────────────────────────────────────────
 
     def _api_get_finance(self, vendor_id):
-        from database import get_finance_summary
+        from database import get_finance_summary, get_unpaid_orders
         summary = get_finance_summary(vendor_id)
-        self._json_response(summary)
+        # Get total receivable (unpaid orders)
+        unpaid = get_unpaid_orders(vendor_id)
+        total_receivable = sum(o['total'] for o in unpaid) if unpaid else 0
+        # Map to what frontend expects
+        self._json_response({
+            "total_sales": summary.get('income', 0),
+            "total_collected": summary.get('income', 0) - total_receivable,
+            "total_expenses": summary.get('expenses', 0),
+            "total_receivable": total_receivable,
+            "cogs": summary.get('cogs', 0),
+        })
 
     def _api_get_receivables(self, vendor_id):
         from database import get_receivables
-        items = get_receivables(vendor_id)
-        self._json_response({
-            "items": [dict(r) for r in items] if items else [],
-        })
+        items_raw = get_receivables(vendor_id)
+        # Map DB fields to what frontend expects
+        items = []
+        if items_raw:
+            for r in items_raw:
+                row = dict(r)
+                row['cliente_nombre'] = row.get('nombre', 'Cliente')
+                row['pedidos_pendientes'] = row.get('num_pedidos', 0)
+                row['total_pendiente'] = row.get('total_deuda', 0)
+                items.append(row)
+        self._json_response({"items": items})
 
     def _api_get_margin(self, vendor_id):
         from database import get_margin_analysis
         analysis = get_margin_analysis(vendor_id)
-        self._json_response({
-            "items": [dict(a) for a in analysis] if analysis else [],
-        })
+        # analysis returns {products: [...], top_clients: [...]}
+        # Frontend expects items array with producto, precio_compra, precio_venta
+        items = []
+        if analysis and analysis.get('products'):
+            for p in analysis['products']:
+                row = dict(p)
+                row['nombre'] = row.get('producto', '')
+                row['precio_compra'] = row.get('avg_costo', 0)
+                row['precio_venta'] = row.get('avg_venta', 0)
+                items.append(row)
+        self._json_response({"items": items})
 
     def _api_add_expense(self, vendor_id, body):
         from database import add_expense
@@ -591,9 +630,21 @@ class AppHandler(BaseHTTPRequestHandler):
     # ─────────────────────────────────────────────────────────────────
 
     def _api_get_pipeline(self, vendor_id):
-        from database import get_pipeline_stats
-        stats = get_pipeline_stats(vendor_id)
-        self._json_response(stats)
+        from database import get_pipeline_stats, get_dashboard_stats
+        states = get_pipeline_stats(vendor_id)
+        dash = get_dashboard_stats(vendor_id)
+        # Map state counts to frontend-expected fields
+        state_map = {}
+        if states:
+            for row in states:
+                state_map[row['estado']] = row['c']
+        self._json_response({
+            "total_clients": dash.get('total_clients', 0),
+            "active": state_map.get('Activo', 0),
+            "prospects": state_map.get('Prospecto', 0),
+            "pending_orders": dash.get('pending_orders', 0),
+            "month_sales": dash.get('today_sales', 0),
+        })
 
     def _api_add_note(self, vendor_id, body):
         from database import add_note
@@ -603,8 +654,8 @@ class AppHandler(BaseHTTPRequestHandler):
             self._send_error(400, "cliente_id and texto are required")
             return
         try:
-            note_id = add_note(vendor_id, int(cliente_id), texto)
-            self._json_response({"note_id": note_id})
+            add_note(vendor_id, int(cliente_id), texto)
+            self._json_response({"ok": True})
         except Exception as e:
             self._send_error(500, str(e))
 

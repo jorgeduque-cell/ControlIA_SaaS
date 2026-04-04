@@ -770,9 +770,9 @@ var CMD_HANDLERS = {
       addBtn: { label: '+ Nuevo Cliente', cmd: 'nuevo_cliente' },
       renderItem: function(item) {
         return {
-          icon: item.tipo_cliente === 'Prospecto' ? '🔵' : '🟢',
+          icon: item.estado === 'Prospecto' ? '🔵' : '🟢',
           title: item.nombre,
-          subtitle: (item.tipo_cliente || 'Cliente') + ' · ' + (item.telefono || 'Sin teléfono'),
+          subtitle: (item.estado || 'Cliente') + ' · ' + (item.telefono || 'Sin teléfono'),
           detail: item.direccion || ''
         };
       }
@@ -790,7 +790,7 @@ var CMD_HANDLERS = {
       searchEndpoint: '/api/clients/search',
       startWithSearch: true,
       renderItem: function(item) {
-        return { icon: '👤', title: item.nombre, subtitle: (item.tipo_cliente || 'Cliente') + ' · ' + (item.telefono || '') };
+        return { icon: '👤', title: item.nombre, subtitle: (item.estado || 'Cliente') + ' · ' + (item.telefono || '') };
       }
     });
   },
@@ -859,10 +859,15 @@ var CMD_HANDLERS = {
       emptyText: 'No hay pedidos registrados',
       addBtn: { label: '+ Nuevo Pedido', cmd: 'vender' },
       renderItem: function(item) {
+        var isPaid = item.estado_pago === 'Pagado';
+        var isDelivered = item.estado === 'Entregado';
+        var icon = isPaid ? '✅' : isDelivered ? '📦' : '🕐';
+        var statusParts = [item.estado];
+        if (isDelivered) statusParts.push(isPaid ? '💚 Pagado' : '🔴 Sin pagar');
         return {
-          icon: item.estado === 'Pagado' ? '✅' : item.estado === 'Entregado' ? '📦' : '🕐',
+          icon: icon,
           title: item.producto + ' × ' + item.cantidad,
-          subtitle: (item.cliente_nombre || 'Cliente') + ' · ' + item.estado,
+          subtitle: (item.cliente_nombre || 'Cliente') + ' · ' + statusParts.join(' · '),
           detail: formatCOP(item.precio_venta * item.cantidad)
         };
       }
@@ -950,7 +955,7 @@ var CMD_HANDLERS = {
         return {
           icon: '📦',
           title: item.nombre,
-          subtitle: 'Compra: ' + formatCOP(item.precio_compra) + ' · Stock: ' + (item.stock || 0),
+          subtitle: 'Compra: ' + formatCOP(item.precio_compra) + ' · Stock: ' + (item.stock_actual || item.stock || 0),
           detail: formatCOP(item.precio_venta)
         };
       }
@@ -1081,7 +1086,7 @@ var CMD_HANDLERS = {
         return {
           icon: '👤',
           title: item.nombre,
-          subtitle: (item.tipo_cliente || 'Cliente') + ' · ' + (item.telefono || 'Sin teléfono'),
+          subtitle: (item.estado || 'Cliente') + ' · ' + (item.telefono || 'Sin teléfono'),
           detail: '→'
         };
       },
@@ -1095,7 +1100,8 @@ var CMD_HANDLERS = {
               { icon: '👤', label: 'Nombre', value: c.nombre || 'N/A' },
               { icon: '📱', label: 'Teléfono', value: c.telefono || 'N/A' },
               { icon: '📍', label: 'Dirección', value: c.direccion || 'N/A' },
-              { icon: '🏷️', label: 'Tipo', value: c.tipo_cliente || 'Cliente' },
+              { icon: '🏷️', label: 'Estado', value: c.estado || 'Prospecto' },
+              { icon: '🏢', label: 'Tipo Negocio', value: c.tipo_negocio || 'Sin definir' },
               { icon: '📅', label: 'Día de visita', value: c.dia_visita || 'Sin asignar' },
               { icon: '📦', label: 'Total pedidos', value: (data.orders_count || 0).toString() },
               { icon: '💰', label: 'Total compras', value: formatCOP(data.total_purchases || 0) }
