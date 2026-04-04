@@ -214,6 +214,8 @@ class AppHandler(BaseHTTPRequestHandler):
             self._api_get_margin(vendor_id)
         elif path == '/api/pipeline':
             self._api_get_pipeline(vendor_id)
+        elif path == '/api/backup':
+            self._api_get_backup(vendor_id)
         else:
             self._send_error(404, "API endpoint not found")
 
@@ -240,12 +242,20 @@ class AppHandler(BaseHTTPRequestHandler):
             self._api_deliver_order(vendor_id, body)
         elif path == '/api/orders/pay':
             self._api_pay_order(vendor_id, body)
+        elif path == '/api/orders/repeat':
+            self._api_repeat_order(vendor_id, body)
         elif path == '/api/expenses':
             self._api_add_expense(vendor_id, body)
         elif path == '/api/notes':
             self._api_add_note(vendor_id, body)
         elif path == '/api/clients/search':
             self._api_search_clients(vendor_id, body)
+        elif path == '/api/clients/assign-day':
+            self._api_assign_day(vendor_id, body)
+        elif path == '/api/finance/meta':
+            self._api_set_meta(vendor_id, body)
+        elif path.startswith('/api/delete/'):
+            self._api_delete_record(vendor_id, path, body)
         else:
             self._send_error(404, "API endpoint not found")
 
@@ -533,6 +543,100 @@ class AppHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_error(500, str(e))
 
+    # ── BACKUP ──
+
+    def _api_get_backup(self, vendor_id):
+        """GET /api/backup — Returns all business data as JSON for download."""
+        from database import get_backup_data
+        try:
+            data = get_backup_data(vendor_id)
+            self._json_response({"backup": data, "vendor_id": vendor_id})
+        except Exception as e:
+            self._send_error(500, str(e))
+
+    # ── REPEAT ORDER ──
+
+    def _api_repeat_order(self, vendor_id, body):
+        """POST /api/orders/repeat — Repeat the last order for a client."""
+        from database import get_last_order, add_order
+        cliente_id = body.get('cliente_id')
+        if not cliente_id:
+            self._send_error(400, "cliente_id is required")
+            return
+        try:
+            last = get_last_order(int(cliente_id), vendor_id)
+            if not last:
+                self._send_error(404, "No hay pedidos anteriores para este cliente")
+                return
+            order_id = add_order(
+                vendor_id, int(cliente_id), last['producto'],
+                last['cantidad'], last.get('precio_compra', 0), last['precio_venta']
+            )
+            self._json_response({"order_id": order_id, "producto": last['producto'], "cantidad": last['cantidad']})
+        except Exception as e:
+            self._send_error(500, str(e))
+
+    # ── ASSIGN VISIT DAY ──
+
+    def _api_assign_day(self, vendor_id, body):
+        """POST /api/clients/assign-day — Assign visit day to a client."""
+        from database import search_clients, update_client
+        nombre = (body.get('cliente_nombre') or '').strip()
+        dia = (body.get('dia') or '').strip()
+        if not nombre or not dia:
+            self._send_error(400, "cliente_nombre and dia are required")
+            return
+        try:
+            results = search_clients(vendor_id, nombre)
+            if not results:
+                self._send_error(404, "Cliente no encontrado: " + nombre)
+                return
+            client = results[0]
+            update_client(client['id'], vendor_id, dia_visita=dia)
+            self._json_response({"ok": True, "client": client['nombre'], "dia": dia})
+        except Exception as e:
+            self._send_error(500, str(e))
+
+    # ── SET META ──
+
+    def _api_set_meta(self, vendor_id, body):
+        """POST /api/finance/meta — Set monthly sales goal."""
+        from database import update_vendedor
+        meta = body.get('meta')
+        if meta is None:
+            self._send_error(400, "meta is required")
+            return
+        try:
+            update_vendedor(vendor_id, meta_mensual=float(meta))
+            self._json_response({"ok": True, "meta": float(meta)})
+        except Exception as e:
+            self._send_error(500, str(e))
+
+    # ── DELETE RECORDS ──
+
+    def _api_delete_record(self, vendor_id, path, body):
+        """POST /api/delete/<type> — Delete a record (client, order, product)."""
+        from database import delete_client, delete_order, delete_product
+        record_type = path.split('/')[-1]
+        record_id = body.get('id')
+        if not record_id:
+            self._send_error(400, "id is required")
+            return
+        try:
+            record_id = int(record_id)
+            if record_type == 'client':
+                delete_client(record_id, vendor_id)
+            elif record_type == 'order':
+                delete_order(record_id, vendor_id)
+            elif record_type == 'product':
+                delete_product(record_id, vendor_id)
+            else:
+                self._send_error(400, "Invalid record type: " + record_type)
+                return
+            self._json_response({"ok": True, "deleted": record_type, "id": record_id})
+        except Exception as e:
+            self._send_error(500, str(e))
+
     # ── MERCADO PAGO WEBHOOK (Sprint 4) ──
 
     def _webhook_mercadopago(self):
@@ -576,7 +680,7 @@ class AppHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers",
                          "Content-Type, X-Telegram-Init-Data, X-Dev-Vendor-Id")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 
     def _serialize_vendor(self, vendedor):
         """Convert vendor dict to JSON-safe format."""

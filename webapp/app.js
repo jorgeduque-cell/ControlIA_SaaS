@@ -1033,17 +1033,21 @@ var CMD_HANDLERS = {
 
   // ── CRM Extras ──
   nota: function() {
-    App.showForm({
-      title: '📝 Agregar Nota',
-      subtitle: 'Nota de seguimiento para un cliente',
-      fields: [
-        { key: 'cliente_nombre', label: 'Nombre del cliente', type: 'text', required: true, icon: '👤' },
-        { key: 'texto', label: 'Nota / Observación', type: 'text', required: true, icon: '📝' }
-      ],
-      submitLabel: 'Guardar Nota',
-      apiEndpoint: '/api/notes',
-      successMsg: '✅ Nota guardada'
-    });
+    API.get('/api/clients').then(function(data) {
+      var clients = data.items || [];
+      if (clients.length === 0) { showToast('Primero registra un cliente', 'error'); return; }
+      App.showForm({
+        title: '📝 Agregar Nota',
+        subtitle: 'Nota de seguimiento para un cliente',
+        fields: [
+          { key: 'cliente_id', label: 'Cliente', type: 'select', options: clients.map(function(c) { return { value: c.id, label: c.nombre }; }), required: true, icon: '👤' },
+          { key: 'texto', label: 'Nota / Observación', type: 'text', required: true, icon: '📝' }
+        ],
+        submitLabel: 'Guardar Nota',
+        apiEndpoint: '/api/notes',
+        successMsg: '✅ Nota guardada'
+      });
+    }).catch(function() { showToast('Error al cargar clientes', 'error'); });
   },
 
   ficha: function() {
@@ -1090,39 +1094,210 @@ var CMD_HANDLERS = {
   },
 
   radar: function() {
-    showToast('📡 Usa /radar en el chat para buscar clientes cercanos con GPS', 'info');
+    if (!navigator.geolocation) {
+      showToast('Tu dispositivo no soporta GPS', 'error');
+      return;
+    }
+    showToast('📡 Obteniendo tu ubicación...', 'info');
+    navigator.geolocation.getCurrentPosition(
+      function(pos) {
+        var lat = pos.coords.latitude;
+        var lng = pos.coords.longitude;
+        showToast('📍 Ubicación obtenida. Mostrando clientes...', 'info');
+        App.showList({
+          title: '📡 Radar de Clientes',
+          subtitle: 'Clientes cerca de tu ubicación',
+          apiEndpoint: '/api/clients',
+          emptyIcon: '📡',
+          emptyText: 'No hay clientes registrados',
+          renderItem: function(item) {
+            return {
+              icon: '📍',
+              title: item.nombre,
+              subtitle: item.direccion || 'Sin dirección',
+              detail: item.telefono || ''
+            };
+          },
+          onItemClick: function(item) {
+            if (item.direccion) {
+              window.open('https://www.google.com/maps/search/' + encodeURIComponent(item.direccion), '_blank');
+            } else {
+              showToast('Este cliente no tiene dirección registrada', 'info');
+            }
+          }
+        });
+      },
+      function() {
+        showToast('No se pudo obtener tu ubicación. Verifica los permisos de GPS.', 'error');
+      },
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
   },
 
   asignar_dia: function() {
-    App.showForm({
-      title: '📅 Asignar Día de Visita',
-      subtitle: 'Programa el día de visita de un cliente',
-      fields: [
-        { key: 'cliente_nombre', label: 'Nombre del cliente', type: 'text', required: true, icon: '👤' },
-        { key: 'dia', label: 'Día', type: 'select', options: ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'], required: true, icon: '📅' }
-      ],
-      submitLabel: 'Asignar Día',
-      apiEndpoint: '/api/clients/assign-day',
-      successMsg: '✅ Día de visita asignado'
-    });
+    API.get('/api/clients').then(function(data) {
+      var clients = data.items || [];
+      if (clients.length === 0) { showToast('Primero registra un cliente', 'error'); return; }
+      App.showForm({
+        title: '📅 Asignar Día de Visita',
+        subtitle: 'Programa el día de visita de un cliente',
+        fields: [
+          { key: 'cliente_nombre', label: 'Cliente', type: 'select', options: clients.map(function(c) { return { value: c.nombre, label: c.nombre }; }), required: true, icon: '👤' },
+          { key: 'dia', label: 'Día', type: 'select', options: ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'], required: true, icon: '📅' }
+        ],
+        submitLabel: 'Asignar Día',
+        apiEndpoint: '/api/clients/assign-day',
+        successMsg: '✅ Día de visita asignado'
+      });
+    }).catch(function() { showToast('Error al cargar clientes', 'error'); });
   },
 
   // ── Ventas Extras ──
   repetir: function() {
-    showToast('🔄 Usa /repetir en el chat para repetir tu último pedido', 'info');
+    API.get('/api/clients').then(function(data) {
+      var clients = data.items || [];
+      if (clients.length === 0) { showToast('No hay clientes', 'error'); return; }
+      App.showList({
+        title: '🔄 Repetir Último Pedido',
+        subtitle: 'Selecciona el cliente para repetir su pedido',
+        apiEndpoint: '/api/clients',
+        emptyIcon: '🔄',
+        emptyText: 'No hay clientes registrados',
+        renderItem: function(item) {
+          return { icon: '👤', title: item.nombre, subtitle: item.telefono || '', detail: '→' };
+        },
+        onItemClick: function(item) {
+          API.post('/api/orders/repeat', { cliente_id: item.id })
+            .then(function(res) {
+              showToast('✅ Pedido repetido: ' + res.producto + ' ×' + res.cantidad, 'info');
+              haptic('success');
+            })
+            .catch(function(err) {
+              showToast('No hay pedidos anteriores para este cliente', 'error');
+            });
+        }
+      });
+    }).catch(function() { showToast('Error al cargar clientes', 'error'); });
   },
 
   // ── Documentos ──
   remision: function() {
-    showToast('📄 Usa /remision en el chat para generar el PDF de remisión', 'info');
+    App.showList({
+      title: '📄 Generar Remisión',
+      subtitle: 'Selecciona pedidos para la remisión',
+      apiEndpoint: '/api/orders',
+      emptyIcon: '📄',
+      emptyText: 'No hay pedidos registrados',
+      renderItem: function(item) {
+        return {
+          icon: item.estado === 'Pagado' ? '✅' : '📦',
+          title: item.producto + ' × ' + item.cantidad,
+          subtitle: (item.cliente_nombre || 'Cliente') + ' · ' + item.estado,
+          detail: formatCOP(item.precio_venta * item.cantidad)
+        };
+      },
+      onItemClick: function(item) {
+        var text = '═══ REMISIÓN ═══\n\n' +
+          'Cliente: ' + (item.cliente_nombre || 'N/A') + '\n' +
+          'Producto: ' + item.producto + '\n' +
+          'Cantidad: ' + item.cantidad + '\n' +
+          'Precio: ' + formatCOP(item.precio_venta) + '\n' +
+          'Total: ' + formatCOP(item.precio_venta * item.cantidad) + '\n' +
+          'Estado: ' + item.estado + '\n' +
+          'Fecha: ' + new Date().toLocaleDateString('es-CO') + '\n' +
+          '═══════════════';
+        var blob = new Blob([text], { type: 'text/plain' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'remision_' + (item.cliente_nombre || 'pedido').replace(/\s/g, '_') + '.txt';
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('📄 Remisión descargada', 'info');
+      }
+    });
   },
 
   despacho: function() {
-    showToast('🚛 Usa /despacho en el chat para generar el PDF de despacho', 'info');
+    App.showList({
+      title: '🚛 Despacho de Mercancía',
+      subtitle: 'Selecciona pedidos para el despacho',
+      apiEndpoint: '/api/orders?status=Pendiente',
+      emptyIcon: '🚛',
+      emptyText: 'No hay pedidos pendientes de despacho',
+      renderItem: function(item) {
+        return {
+          icon: '📦',
+          title: item.producto + ' × ' + item.cantidad,
+          subtitle: (item.cliente_nombre || 'Cliente') + ' · ' + (item.direccion || ''),
+          detail: formatCOP(item.precio_venta * item.cantidad)
+        };
+      },
+      onItemClick: function(item) {
+        var text = '═══ DESPACHO DE MERCANCÍA ═══\n\n' +
+          'Cliente: ' + (item.cliente_nombre || 'N/A') + '\n' +
+          'Dirección: ' + (item.direccion || 'N/A') + '\n' +
+          'Producto: ' + item.producto + '\n' +
+          'Cantidad: ' + item.cantidad + '\n' +
+          'Precio: ' + formatCOP(item.precio_venta) + '\n' +
+          'Total: ' + formatCOP(item.precio_venta * item.cantidad) + '\n' +
+          'Fecha despacho: ' + new Date().toLocaleDateString('es-CO') + '\n' +
+          '═══════════════════════';
+        var blob = new Blob([text], { type: 'text/plain' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'despacho_' + (item.cliente_nombre || 'pedido').replace(/\s/g, '_') + '.txt';
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('🚛 Despacho descargado', 'info');
+      }
+    });
   },
 
   cotizar: function() {
-    showToast('📋 Usa /cotizar en el chat para generar una cotización', 'info');
+    App.showResult({
+      title: '📋 Cotización',
+      apiEndpoint: '/api/products',
+      render: function(data) {
+        var products = data.products || [];
+        if (products.length === 0) return '<div style="text-align:center;padding:32px;color:var(--c-text-muted);">No hay productos en el catálogo</div>';
+
+        var total = 0;
+        var html = '<div style="margin-bottom:16px;font-size:0.85rem;color:var(--c-text-muted);text-align:center;">Fecha: ' + new Date().toLocaleDateString('es-CO') + '</div>';
+        products.forEach(function(p) {
+          total += (p.precio_venta || 0);
+          html += '<div class="glass-card" style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;margin-bottom:8px;">' +
+            '<div><div style="font-weight:600;">' + p.nombre + '</div>' +
+            '<div style="font-size:0.75rem;color:var(--c-text-muted);">Stock: ' + (p.stock || 0) + '</div></div>' +
+            '<span style="font-weight:700;color:var(--c-accent);">' + formatCOP(p.precio_venta) + '</span></div>';
+        });
+
+        html += '<div style="margin-top:16px;text-align:center;">' +
+          '<div onclick="CMD_HANDLERS._downloadCotizacion()" ' +
+          'style="display:inline-block;padding:12px 24px;background:var(--c-primary);color:white;border-radius:12px;cursor:pointer;font-weight:600;touch-action:manipulation;">⬇️ Descargar Cotización</div></div>';
+        return html;
+      }
+    });
+  },
+
+  _downloadCotizacion: function() {
+    API.get('/api/products').then(function(data) {
+      var products = data.products || [];
+      var text = '═══ COTIZACIÓN ═══\n\nFecha: ' + new Date().toLocaleDateString('es-CO') + '\n\n';
+      products.forEach(function(p, i) {
+        text += (i + 1) + '. ' + p.nombre + ' — ' + formatCOP(p.precio_venta) + '\n';
+      });
+      text += '\n═══════════════';
+      var blob = new Blob([text], { type: 'text/plain' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'cotizacion_' + new Date().toISOString().slice(0, 10) + '.txt';
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('📋 Cotización descargada', 'info');
+    });
   },
 
   // ── Logística ──
@@ -1148,15 +1323,65 @@ var CMD_HANDLERS = {
   },
 
   ruta_pie: function() {
-    showToast('🚶 Usa /ruta_pie en el chat y comparte tu ubicación para calcular ruta a pie', 'info');
+    if (!navigator.geolocation) { showToast('Tu dispositivo no soporta GPS', 'error'); return; }
+    showToast('📍 Obteniendo ubicación...', 'info');
+    navigator.geolocation.getCurrentPosition(
+      function(pos) {
+        API.get('/api/clients').then(function(data) {
+          var clients = (data.items || []).filter(function(c) { return c.direccion; });
+          if (clients.length === 0) { showToast('No hay clientes con dirección', 'error'); return; }
+          var destinations = clients.slice(0, 10).map(function(c) { return encodeURIComponent(c.direccion); }).join('|');
+          var url = 'https://www.google.com/maps/dir/' + pos.coords.latitude + ',' + pos.coords.longitude + '/' + clients.slice(0, 10).map(function(c) { return encodeURIComponent(c.direccion); }).join('/') + '/?dirflg=w';
+          window.open(url, '_blank');
+          showToast('🚶 Ruta a pie abierta en Google Maps', 'info');
+        });
+      },
+      function() { showToast('No se pudo obtener tu ubicación', 'error'); },
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
   },
 
   ruta_camion: function() {
-    showToast('🚛 Usa /ruta_camion en el chat y comparte tu ubicación para ruta en vehículo', 'info');
+    if (!navigator.geolocation) { showToast('Tu dispositivo no soporta GPS', 'error'); return; }
+    showToast('📍 Obteniendo ubicación...', 'info');
+    navigator.geolocation.getCurrentPosition(
+      function(pos) {
+        API.get('/api/clients').then(function(data) {
+          var clients = (data.items || []).filter(function(c) { return c.direccion; });
+          if (clients.length === 0) { showToast('No hay clientes con dirección', 'error'); return; }
+          var url = 'https://www.google.com/maps/dir/' + pos.coords.latitude + ',' + pos.coords.longitude + '/' + clients.slice(0, 10).map(function(c) { return encodeURIComponent(c.direccion); }).join('/');
+          window.open(url, '_blank');
+          showToast('🚛 Ruta en vehículo abierta en Google Maps', 'info');
+        });
+      },
+      function() { showToast('No se pudo obtener tu ubicación', 'error'); },
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
   },
 
   ruta_semanal: function() {
-    showToast('📅 Usa /ruta_semanal en el chat para ver tu planificación semanal', 'info');
+    App.showList({
+      title: '📅 Ruta Semanal',
+      subtitle: 'Clientes organizados por día de visita',
+      apiEndpoint: '/api/clients',
+      emptyIcon: '📅',
+      emptyText: 'Asigna días de visita a tus clientes primero',
+      renderItem: function(item) {
+        return {
+          icon: item.dia_visita ? '📅' : '⬜',
+          title: item.nombre,
+          subtitle: item.dia_visita || 'Sin día asignado',
+          detail: item.direccion ? '📍' : ''
+        };
+      },
+      onItemClick: function(item) {
+        if (item.direccion) {
+          window.open('https://www.google.com/maps/search/' + encodeURIComponent(item.direccion), '_blank');
+        } else {
+          showToast('Cliente sin dirección registrada', 'info');
+        }
+      }
+    });
   },
 
   // ── Finanzas Extras ──
@@ -1179,8 +1404,7 @@ var CMD_HANDLERS = {
           '<span>💰 Vendido</span><span style="font-weight:700;color:#00E676;">' + formatCOP(sales) + '</span></div>' +
           '<div class="glass-card" style="display:flex;justify-content:space-between;padding:14px 18px;margin-bottom:8px;">' +
           '<span>📊 Faltante</span><span style="font-weight:700;color:#FF6B9D;">' + formatCOP(remaining) + '</span></div>' +
-          '<div style="margin-top:12px;text-align:center;color:var(--c-text-muted);font-size:0.8rem;">' +
-          (meta === 0 ? 'Configura tu meta con ⚙️ Configurar Meta' : '') + '</div>';
+          (meta === 0 ? '<div style="margin-top:12px;text-align:center;color:var(--c-text-muted);font-size:0.8rem;">Configura tu meta con ⚙️ Configurar Meta</div>' : '');
       }
     });
   },
@@ -1200,15 +1424,82 @@ var CMD_HANDLERS = {
 
   // ── Admin ──
   editar: function() {
-    showToast('✏️ Usa /editar en el chat para editar registros existentes', 'info');
+    App.showList({
+      title: '✏️ Editar Registro',
+      subtitle: '¿Qué tipo de registro deseas editar?',
+      apiEndpoint: '/api/clients',
+      emptyIcon: '✏️',
+      emptyText: 'No hay registros para editar',
+      renderItem: function(item) {
+        return {
+          icon: '👤',
+          title: item.nombre,
+          subtitle: (item.tipo_cliente || 'Cliente') + ' · ' + (item.telefono || ''),
+          detail: '✏️'
+        };
+      },
+      onItemClick: function(item) {
+        App.showForm({
+          title: '✏️ Editar: ' + item.nombre,
+          subtitle: 'Modifica los datos del cliente',
+          fields: [
+            { key: 'nombre', label: 'Nombre', type: 'text', icon: '👤' },
+            { key: 'telefono', label: 'Teléfono', type: 'tel', icon: '📱' },
+            { key: 'direccion', label: 'Dirección', type: 'text', icon: '📍' },
+            { key: 'tipo_cliente', label: 'Tipo', type: 'select', options: ['Cliente', 'Prospecto'], icon: '🏷️' }
+          ],
+          submitLabel: 'Guardar Cambios',
+          apiEndpoint: '/api/clients',
+          prefill: item,
+          successMsg: '✅ Cliente actualizado'
+        });
+      }
+    });
   },
 
   eliminar: function() {
-    showToast('🗑️ Usa /eliminar en el chat para eliminar registros', 'info');
+    App.showList({
+      title: '🗑️ Eliminar Registro',
+      subtitle: 'Selecciona el cliente a eliminar',
+      apiEndpoint: '/api/clients',
+      emptyIcon: '🗑️',
+      emptyText: 'No hay registros para eliminar',
+      renderItem: function(item) {
+        return {
+          icon: '⚠️',
+          title: item.nombre,
+          subtitle: (item.tipo_cliente || 'Cliente') + ' · ' + (item.telefono || ''),
+          detail: '🗑️'
+        };
+      },
+      onItemClick: function(item) {
+        if (confirm('⚠️ ¿Eliminar permanentemente a ' + item.nombre + '?\n\nEsta acción no se puede deshacer.')) {
+          API.post('/api/delete/client', { id: item.id })
+            .then(function() {
+              showToast('🗑️ Cliente eliminado', 'info');
+              haptic('medium');
+              CMD_HANDLERS.eliminar();
+            })
+            .catch(function() { showToast('Error al eliminar', 'error'); });
+        }
+      }
+    });
   },
 
   backup: function() {
-    showToast('💾 Usa /backup en el chat para respaldar tus datos', 'info');
+    showToast('💾 Generando respaldo...', 'info');
+    API.get('/api/backup').then(function(data) {
+      var text = JSON.stringify(data.backup, null, 2);
+      var blob = new Blob([text], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'controlia_backup_' + new Date().toISOString().slice(0, 10) + '.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('💾 Respaldo descargado exitosamente', 'info');
+      haptic('success');
+    }).catch(function() { showToast('Error al generar respaldo', 'error'); });
   }
 };
 
