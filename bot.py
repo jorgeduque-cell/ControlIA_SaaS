@@ -100,6 +100,7 @@ def set_menu_button():
             webapp_url = f"{WEBAPP_URL}/app/"
             bot.set_chat_menu_button(
                 menu_button=types.MenuButtonWebApp(
+                    type="web_app",
                     text="📊 ControlIA",
                     web_app=types.WebAppInfo(url=webapp_url),
                 )
@@ -131,6 +132,23 @@ if __name__ == "__main__":
     port = start_health_server()
     print(f"  ✅ Health server en puerto {port}.")
 
+    # Clear any stale Telegram connections (prevents 409 Conflict on Render restarts)
+    import time
+    try:
+        bot.remove_webhook()
+        bot.get_updates(offset=-1, timeout=1)
+    except Exception:
+        pass
+    time.sleep(2)  # Let the old instance fully die
+
     print("  🤖 Bot en ejecución. Ctrl+C para detener.")
     print("=" * 50)
-    bot.infinity_polling(timeout=60, long_polling_timeout=60, skip_pending=True)
+
+    # Retry loop — handles transient 409 conflicts during Render deploys
+    while True:
+        try:
+            bot.infinity_polling(timeout=60, long_polling_timeout=60, skip_pending=True)
+            break  # Clean exit
+        except Exception as e:
+            logger.error("Polling crashed: %s — restarting in 5s...", e)
+            time.sleep(5)
