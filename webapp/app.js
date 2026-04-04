@@ -447,6 +447,48 @@ var App = {
       bar.className = 'subscription-bar__fill ' + (pct > 30 ? 'subscription-bar__fill--healthy' : 'subscription-bar__fill--warning');
       subText.textContent = daysLeft > 0 ? daysLeft + ' días restantes' : 'Suscripción vencida';
     }
+
+    // Logo preview
+    var logoPreview = document.getElementById('logo-preview');
+    if (logoPreview) {
+      if (v.logo_base64) {
+        logoPreview.innerHTML = '<img src="' + v.logo_base64 + '" style="max-width:120px;max-height:120px;border-radius:12px;border:2px solid var(--c-border);">';
+      } else {
+        logoPreview.innerHTML = '<div style="font-size:0.85rem;color:var(--c-text-muted);padding:16px;">Sin logo</div>';
+      }
+    }
+
+    // Logo upload handler
+    var logoInput = document.getElementById('logo-file-input');
+    if (logoInput && !logoInput._bound) {
+      logoInput._bound = true;
+      logoInput.addEventListener('change', function(e) {
+        var file = e.target.files[0];
+        if (!file) return;
+        if (file.size > 200 * 1024) {
+          showToast('Imagen demasiado grande (máx 200KB)', 'error');
+          return;
+        }
+        var reader = new FileReader();
+        reader.onload = function(ev) {
+          var base64 = ev.target.result;
+          // Preview immediately
+          if (logoPreview) {
+            logoPreview.innerHTML = '<img src="' + base64 + '" style="max-width:120px;max-height:120px;border-radius:12px;border:2px solid var(--c-accent);">';
+          }
+          // Upload
+          API.post('/api/vendor/logo', { logo_base64: base64 })
+            .then(function() {
+              showToast('✅ Logo actualizado', 'info');
+              App.vendor.logo_base64 = base64;
+            })
+            .catch(function() {
+              showToast('Error al subir logo', 'error');
+            });
+        };
+        reader.readAsDataURL(file);
+      });
+    }
   },
 
   // ── Module Detail ──
@@ -631,12 +673,15 @@ var App = {
           else { o.value = opt; o.textContent = opt; }
           select.appendChild(o);
         });
+        if (field.defaultValue !== undefined) select.value = field.defaultValue;
         group.appendChild(select);
       } else {
         var inputType = field.type || 'text';
         var placeholderText = (field.icon || '') + ' ' + field.label;
+        var defVal = (field.defaultValue !== undefined && field.defaultValue !== null) ? field.defaultValue : '';
         group.innerHTML = '<input type="' + inputType + '" id="form-field-' + field.key + '" ' +
           'placeholder="' + placeholderText + '" autocomplete="off" ' +
+          'value="' + defVal + '" ' +
           (field.required ? 'required' : '') + ' ' +
           (inputType === 'number' ? 'inputmode="numeric" step="any"' : '') +
           ' style="width:100%;padding:14px 16px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:12px;color:var(--c-text);font-size:0.95rem;font-family:inherit;outline:none;">';
@@ -824,28 +869,183 @@ var CMD_HANDLERS = {
         if (clients.length === 0) { showToast('Primero registra un cliente', 'error'); CMD_HANDLERS.nuevo_cliente(); return; }
         if (products.length === 0) { showToast('Primero agrega productos', 'error'); CMD_HANDLERS.nuevo_producto(); return; }
 
-        App.showForm({
-          title: '🛒 Crear Pedido',
-          subtitle: 'Registrar una venta',
-          fields: [
-            { key: 'cliente_id', label: 'Cliente', type: 'select', options: clients.map(function(c) { return { value: c.id, label: c.nombre }; }), required: true, icon: '👤' },
-            { key: 'producto', label: 'Producto', type: 'select', options: products.map(function(p) { return { value: p.nombre, label: p.nombre + ' — ' + formatCOP(p.precio_venta) }; }), required: true, icon: '📦' },
-            { key: 'cantidad', label: 'Cantidad', type: 'number', required: true, icon: '🔢' },
-            { key: 'precio_venta', label: 'Precio de venta', type: 'number', icon: '💰' }
-          ],
-          submitLabel: 'Crear Pedido',
-          apiEndpoint: '/api/orders',
-          beforeSubmit: function(data) {
-            if (!data.precio_venta) {
-              var prod = products.find(function(p) { return p.nombre === data.producto; });
-              if (prod) { data.precio_venta = prod.precio_venta; data.precio_compra = prod.precio_compra; }
-            }
-            data.cantidad = parseInt(data.cantidad) || 1;
-            data.precio_venta = parseFloat(data.precio_venta) || 0;
-            return data;
-          },
-          successMsg: '✅ Pedido creado'
+        // Build custom multi-product form
+        var titleEl = document.getElementById('data-form-title');
+        var subtitleEl = document.getElementById('data-form-subtitle');
+        var submitTextEl = document.getElementById('data-form-submit-text');
+        var container = document.getElementById('data-form-fields');
+        var submitBtn = document.getElementById('data-form-submit');
+        var spinner = document.getElementById('data-form-spinner');
+
+        if (titleEl) titleEl.textContent = '🛒 Crear Pedido';
+        if (subtitleEl) subtitleEl.textContent = 'Agrega uno o más productos';
+        if (submitTextEl) submitTextEl.textContent = 'Crear Pedido';
+        if (container) container.innerHTML = '';
+
+        var orderItems = [];
+        var itemCounter = 0;
+
+        // Client selector
+        var clientGroup = document.createElement('div');
+        clientGroup.className = 'input-group w-full';
+        clientGroup.style.marginBottom = '12px';
+        var clientSelect = document.createElement('select');
+        clientSelect.id = 'order-client';
+        clientSelect.style.cssText = 'appearance:auto;background:var(--c-bg-card);color:var(--c-text);border:1px solid var(--c-border);padding:14px 16px;border-radius:12px;width:100%;font-size:0.95rem;';
+        var defaultOpt = document.createElement('option');
+        defaultOpt.value = ''; defaultOpt.textContent = '👤 Seleccionar cliente';
+        clientSelect.appendChild(defaultOpt);
+        clients.forEach(function(c) {
+          var o = document.createElement('option');
+          o.value = c.id; o.textContent = c.nombre;
+          clientSelect.appendChild(o);
         });
+        clientGroup.appendChild(clientSelect);
+        container.appendChild(clientGroup);
+
+        // Items container
+        var itemsDiv = document.createElement('div');
+        itemsDiv.id = 'order-items-container';
+        container.appendChild(itemsDiv);
+
+        // Total display
+        var totalDiv = document.createElement('div');
+        totalDiv.id = 'order-total-display';
+        totalDiv.style.cssText = 'text-align:center;padding:12px;font-size:1.1rem;font-weight:700;color:var(--c-accent);margin:8px 0;';
+        totalDiv.textContent = 'Total: $0';
+        container.appendChild(totalDiv);
+
+        // Add item button
+        var addBtn = document.createElement('button');
+        addBtn.type = 'button';
+        addBtn.className = 'btn btn--ghost w-full';
+        addBtn.style.marginBottom = '12px';
+        addBtn.textContent = '＋ Agregar producto';
+        addBtn.onclick = function() { addItemRow(); };
+        container.appendChild(addBtn);
+
+        function updateTotal() {
+          var total = 0;
+          orderItems.forEach(function(item) {
+            var qtyEl = document.getElementById('item-qty-' + item.idx);
+            var priceEl = document.getElementById('item-price-' + item.idx);
+            if (!qtyEl || !priceEl) return; // row was removed
+            var qty = parseInt(qtyEl.value) || 0;
+            var price = parseFloat(priceEl.value) || 0;
+            total += qty * price;
+          });
+          totalDiv.textContent = 'Total: ' + formatCOP(total);
+        }
+
+        function addItemRow() {
+          var idx = itemCounter++;
+          var row = document.createElement('div');
+          row.className = 'glass-card';
+          row.id = 'item-row-' + idx;
+          row.style.cssText = 'padding:12px;margin-bottom:10px;position:relative;';
+
+          // Product select
+          var prodSelect = '<select id="item-prod-' + idx + '" style="appearance:auto;background:var(--c-bg-input);color:var(--c-text);border:1px solid var(--c-border);padding:10px 12px;border-radius:10px;width:100%;font-size:0.9rem;margin-bottom:8px;">';
+          prodSelect += '<option value="">📦 Producto</option>';
+          products.forEach(function(p) {
+            prodSelect += '<option value="' + p.nombre + '" data-pv="' + p.precio_venta + '" data-pc="' + p.precio_compra + '">' + p.nombre + ' — ' + formatCOP(p.precio_venta) + '</option>';
+          });
+          prodSelect += '</select>';
+
+          row.innerHTML = prodSelect +
+            '<div style="display:flex;gap:8px;margin-bottom:8px;">' +
+              '<input type="number" id="item-qty-' + idx + '" placeholder="🔢 Cantidad" value="1" inputmode="numeric" style="flex:1;padding:10px 12px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:10px;color:var(--c-text);font-size:0.9rem;">' +
+              '<input type="number" id="item-price-' + idx + '" placeholder="💰 Precio" inputmode="numeric" step="any" style="flex:1;padding:10px 12px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:10px;color:var(--c-text);font-size:0.9rem;">' +
+            '</div>' +
+            '<label style="display:flex;align-items:center;gap:6px;font-size:0.8rem;color:var(--c-text-muted);cursor:pointer;">' +
+              '<input type="checkbox" id="item-update-' + idx + '" style="width:16px;height:16px;">' +
+              ' Actualizar precio del producto' +
+            '</label>' +
+            '<button type="button" onclick="document.getElementById(\'item-row-' + idx + '\').remove();var i=window._orderItems.findIndex(function(x){return x.idx===' + idx + '});if(i>-1)window._orderItems.splice(i,1);window._updateOrderTotal();" style="position:absolute;top:8px;right:8px;background:none;border:none;color:#FF6B9D;font-size:1.2rem;cursor:pointer;">✕</button>';
+
+          itemsDiv.appendChild(row);
+          orderItems.push({ idx: idx });
+
+          // Auto-fill price when product selected
+          var prodEl = document.getElementById('item-prod-' + idx);
+          var priceEl = document.getElementById('item-price-' + idx);
+          prodEl.onchange = function() {
+            var selected = prodEl.options[prodEl.selectedIndex];
+            if (selected && selected.dataset.pv) {
+              priceEl.value = selected.dataset.pv;
+            }
+            updateTotal();
+          };
+          priceEl.oninput = updateTotal;
+          document.getElementById('item-qty-' + idx).oninput = updateTotal;
+        }
+
+        // Store refs globally for remove button
+        window._orderItems = orderItems;
+        window._updateOrderTotal = updateTotal;
+
+        // Add first item row
+        addItemRow();
+
+        // Submit handler
+        if (submitBtn) {
+          submitBtn.onclick = function() {
+            var clientId = clientSelect.value;
+            if (!clientId) { haptic('error'); showToast('Selecciona un cliente', 'error'); return; }
+
+            var items = [];
+            var hasError = false;
+            orderItems.forEach(function(item) {
+              var prodEl = document.getElementById('item-prod-' + item.idx);
+              var qtyEl = document.getElementById('item-qty-' + item.idx);
+              var priceEl = document.getElementById('item-price-' + item.idx);
+              var updateEl = document.getElementById('item-update-' + item.idx);
+              if (!prodEl || !qtyEl || !priceEl) return; // row was removed
+              var producto = prodEl.value;
+              var cantidad = parseInt(qtyEl.value) || 0;
+              var precio = parseFloat(priceEl.value) || 0;
+              if (!producto || cantidad <= 0 || precio <= 0) { hasError = true; return; }
+
+              // Get precio_compra from product data
+              var prod = products.find(function(p) { return p.nombre === producto; });
+              items.push({
+                producto: producto,
+                cantidad: cantidad,
+                precio_venta: precio,
+                precio_compra: prod ? prod.precio_compra : 0,
+                update_price: updateEl ? updateEl.checked : false
+              });
+            });
+
+            if (hasError || items.length === 0) {
+              haptic('error');
+              showToast('Completa todos los productos', 'error');
+              return;
+            }
+
+            if (submitTextEl) submitTextEl.classList.add('hidden');
+            if (spinner) spinner.classList.remove('hidden');
+            submitBtn.disabled = true;
+
+            API.post('/api/orders', { cliente_id: parseInt(clientId), items: items })
+              .then(function(res) {
+                haptic('success');
+                showToast('✅ Pedido creado (' + items.length + ' productos)', 'info');
+                popNav();
+              })
+              .catch(function() {
+                haptic('error');
+                showToast('Error al crear pedido', 'error');
+              })
+              .finally(function() {
+                if (submitTextEl) submitTextEl.classList.remove('hidden');
+                if (spinner) spinner.classList.add('hidden');
+                submitBtn.disabled = false;
+              });
+          };
+        }
+
+        pushNav('data-form');
       })
       .catch(function() { showToast('Error al cargar datos', 'error'); });
   },
@@ -945,7 +1145,7 @@ var CMD_HANDLERS = {
   precios: function() {
     App.showList({
       title: '💰 Lista de Precios',
-      subtitle: 'Tu catálogo de productos',
+      subtitle: 'Toca un producto para editarlo',
       apiEndpoint: '/api/products',
       itemsKey: 'products',
       emptyIcon: '💰',
@@ -956,9 +1156,33 @@ var CMD_HANDLERS = {
           icon: '📦',
           title: item.nombre,
           subtitle: 'Compra: ' + formatCOP(item.precio_compra) + ' · Stock: ' + (item.stock_actual || item.stock || 0),
-          detail: formatCOP(item.precio_venta)
+          detail: formatCOP(item.precio_venta) + ' ✏️'
         };
+      },
+      onItemClick: function(item) {
+        CMD_HANDLERS.editar_producto(item);
       }
+    });
+  },
+
+  editar_producto: function(product) {
+    if (!product) { showToast('Selecciona un producto', 'error'); return; }
+    App.showForm({
+      title: '✏️ Editar Producto',
+      subtitle: product.nombre,
+      fields: [
+        { key: 'nombre', label: 'Nombre del producto', type: 'text', required: true, icon: '📦', defaultValue: product.nombre },
+        { key: 'precio_compra', label: 'Precio de compra', type: 'number', icon: '💵', defaultValue: product.precio_compra },
+        { key: 'precio_venta', label: 'Precio de venta', type: 'number', icon: '💰', defaultValue: product.precio_venta },
+        { key: 'stock_actual', label: 'Stock', type: 'number', icon: '📊', defaultValue: product.stock_actual || product.stock || 0 }
+      ],
+      submitLabel: 'Guardar Cambios',
+      apiEndpoint: '/api/products/update',
+      beforeSubmit: function(data) {
+        data.id = product.id;
+        return data;
+      },
+      successMsg: '✅ Producto actualizado'
     });
   },
 

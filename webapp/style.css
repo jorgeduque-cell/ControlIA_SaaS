@@ -482,9 +482,13 @@ input, textarea { font-family: inherit; }
 
 .input-group__input:focus + .input-group__label,
 .input-group__input:not(:placeholder-shown) + .input-group__label {
-  top: 10px;
-  transform: translateY(0) scale(0.75);
+  top: 0;
+  transform: translateY(-50%) scale(0.75);
   color: var(--c-primary-light);
+  z-index: 1;
+  background: var(--c-bg-deep);
+  padding: 0 6px;
+  left: calc(var(--sp-md) - 4px);
 }
 
 .input-group__icon {

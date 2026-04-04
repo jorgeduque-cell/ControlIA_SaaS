@@ -291,6 +291,8 @@ class AppHandler(BaseHTTPRequestHandler):
 
         if path == '/api/products':
             self._api_add_product(vendor_id, body)
+        elif path == '/api/products/update':
+            self._api_update_product(vendor_id, body)
         elif path == '/api/clients':
             self._api_add_client(vendor_id, body)
         elif path == '/api/orders':
@@ -311,6 +313,8 @@ class AppHandler(BaseHTTPRequestHandler):
             self._api_assign_day(vendor_id, body)
         elif path == '/api/finance/meta':
             self._api_set_meta(vendor_id, body)
+        elif path == '/api/vendor/logo':
+            self._api_upload_logo(vendor_id, body)
         elif path.startswith('/api/delete/'):
             self._api_delete_record(vendor_id, path, body)
         elif path == '/api/documents/remision':
@@ -439,6 +443,44 @@ class AppHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.error("Add product failed: %s", e)
             self._send_error(500, str(e))
+    def _api_update_product(self, vendor_id, body):
+        """POST /api/products/update — Edit an existing product."""
+        from database import update_product
+        product_id = body.get('id')
+        if not product_id:
+            self._send_error(400, "id is required")
+            return
+        try:
+            updates = {}
+            if 'nombre' in body: updates['nombre'] = body['nombre']
+            if 'precio_compra' in body: updates['precio_compra'] = float(body['precio_compra'])
+            if 'precio_venta' in body: updates['precio_venta'] = float(body['precio_venta'])
+            if 'stock_actual' in body: updates['stock_actual'] = int(body['stock_actual'])
+            if not updates:
+                self._send_error(400, "No fields to update")
+                return
+            update_product(int(product_id), vendor_id, **updates)
+            self._json_response({"ok": True})
+        except Exception as e:
+            logger.error("Update product failed: %s", e)
+            self._send_error(500, str(e))
+
+    def _api_upload_logo(self, vendor_id, body):
+        """POST /api/vendor/logo — Upload vendor logo as base64."""
+        from database import update_vendedor
+        logo_data = body.get('logo_base64', '')
+        if not logo_data:
+            self._send_error(400, "logo_base64 is required")
+            return
+        # Validate size (~200KB in base64 is ~270KB string)
+        if len(logo_data) > 300000:
+            self._send_error(400, "Logo demasiado grande. Máximo 200KB.")
+            return
+        try:
+            update_vendedor(vendor_id, logo_base64=logo_data)
+            self._json_response({"ok": True})
+        except Exception as e:
+            self._send_error(500, str(e))
 
     # ─────────────────────────────────────────────────────────────────
     # CLIENTS API
@@ -506,7 +548,24 @@ class AppHandler(BaseHTTPRequestHandler):
         })
 
     def _api_add_order(self, vendor_id, body):
-        from database import add_order
+        from database import add_order, add_order_batch
+        items = body.get('items')
+
+        # Multi-product mode: items = [{producto, cantidad, precio_venta, ...}]
+        if items and isinstance(items, list) and len(items) > 0:
+            cliente_id = body.get('cliente_id')
+            if not cliente_id:
+                self._send_error(400, "cliente_id is required")
+                return
+            try:
+                grupo, order_ids = add_order_batch(vendor_id, int(cliente_id), items)
+                self._json_response({"grupo_pedido": grupo, "order_ids": order_ids})
+            except Exception as e:
+                logger.error("Add batch order failed: %s", e)
+                self._send_error(500, str(e))
+            return
+
+        # Single-product mode (backward compatible)
         required = ['cliente_id', 'producto', 'cantidad', 'precio_venta']
         for field in required:
             if not body.get(field):
@@ -794,33 +853,73 @@ class AppHandler(BaseHTTPRequestHandler):
             logger.error("Failed to send PDF to Telegram: %s", e)
             return False
 
+    def _build_logo_element(self, vendedor):
+        """Build a ReportLab Image element from vendor's base64 logo, or None."""
+        from reportlab.platypus import Image as RLImage
+        logo_b64 = vendedor.get('logo_base64') if vendedor else None
+        if not logo_b64:
+            return None
+        try:
+            # Strip data URI prefix if present
+            if ',' in logo_b64:
+                logo_b64 = logo_b64.split(',', 1)[1]
+            import base64
+            logo_bytes = base64.b64decode(logo_b64)
+            logo_buf = io.BytesIO(logo_bytes)
+            from reportlab.lib.units import mm
+            img = RLImage(logo_buf, width=30*mm, height=30*mm)
+            img.hAlign = 'CENTER'
+            return img
+        except Exception as e:
+            logger.warning("Failed to render logo: %s", e)
+            return None
+
     def _api_generate_remision(self, vendor_id, body):
-        """POST /api/documents/remision — Generate remision PDF and send to chat."""
+        """POST /api/documents/remision — Generate remision PDF (multi-product aware)."""
         from reportlab.lib.pagesizes import letter
         from reportlab.lib.units import mm
         from reportlab.lib import colors
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
         from reportlab.lib.enums import TA_CENTER
-        from database import get_vendedor, get_order
+        from database import get_vendedor, get_order, get_orders_by_group
         from utils import format_cop
 
         order_id = body.get('order_id')
-        if not order_id:
-            self._send_error(400, "order_id is required")
+        grupo_pedido = body.get('grupo_pedido')
+
+        if not order_id and not grupo_pedido:
+            self._send_error(400, "order_id or grupo_pedido is required")
             return
 
         try:
-            order_id = int(order_id)
             vendedor = get_vendedor(vendor_id)
-            order = get_order(order_id, vendor_id)
-
-            if not order:
-                self._send_error(404, "Pedido no encontrado")
-                return
-
             nombre = vendedor['nombre_negocio'] if vendedor else 'Mi Negocio'
-            total = order['cantidad'] * order['precio_venta']
+
+            # Collect all items for this remision
+            if grupo_pedido:
+                orders = get_orders_by_group(grupo_pedido, vendor_id)
+                if not orders:
+                    self._send_error(404, "No se encontraron pedidos en este grupo")
+                    return
+                ref_order = orders[0]
+                ref_id = grupo_pedido
+            else:
+                order = get_order(int(order_id), vendor_id)
+                if not order:
+                    self._send_error(404, "Pedido no encontrado")
+                    return
+                # Check if this order has a group
+                if order.get('grupo_pedido'):
+                    orders = get_orders_by_group(order['grupo_pedido'], vendor_id)
+                    ref_id = order['grupo_pedido']
+                else:
+                    orders = [order]
+                    ref_id = str(order['id'])
+                ref_order = orders[0]
+
+            # Calculate grand total
+            grand_total = sum(o['cantidad'] * o['precio_venta'] for o in orders)
 
             buffer = io.BytesIO()
             page_w, page_h = 140 * mm, 216 * mm
@@ -836,15 +935,23 @@ class AppHandler(BaseHTTPRequestHandler):
 
             fecha_str = date.today().isoformat()
             elements = []
+
+            # Logo
+            logo_el = self._build_logo_element(vendedor)
+            if logo_el:
+                elements.append(logo_el)
+                elements.append(Spacer(1, 3 * mm))
+
             elements.append(Paragraph(f"REMISION {nombre}", title_style))
             elements.append(Spacer(1, 5 * mm))
 
-            data = [
-                ["Remision No.", str(order_id), "Fecha", fecha_str],
-                ["Cliente", order.get("cliente_nombre", ""), "Direccion", order.get("cliente_dir") or ""],
-                ["Telefono", order.get("cliente_tel") or "", "", ""],
+            # Header table
+            header_data = [
+                ["Remision No.", str(ref_id), "Fecha", fecha_str],
+                ["Cliente", ref_order.get("cliente_nombre", ""), "Direccion", ref_order.get("cliente_dir") or ""],
+                ["Telefono", ref_order.get("cliente_tel") or "", "", ""],
             ]
-            t = Table(data, colWidths=[25*mm, 35*mm, 25*mm, 35*mm])
+            t = Table(header_data, colWidths=[25*mm, 35*mm, 25*mm, 35*mm])
             t.setStyle(TableStyle([
                 ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
                 ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
@@ -857,10 +964,17 @@ class AppHandler(BaseHTTPRequestHandler):
             elements.append(t)
             elements.append(Spacer(1, 5 * mm))
 
-            detail_data = [
-                ["Producto", "Cantidad", "Precio Unit.", "Total"],
-                [order["producto"], str(order["cantidad"]), format_cop(order["precio_venta"]), format_cop(total)],
-            ]
+            # Detail table — multi-product
+            detail_data = [["Producto", "Cantidad", "Precio Unit.", "Total"]]
+            for o in orders:
+                line_total = o['cantidad'] * o['precio_venta']
+                detail_data.append([
+                    o["producto"],
+                    str(o["cantidad"]),
+                    format_cop(o["precio_venta"]),
+                    format_cop(line_total),
+                ])
+
             dt = Table(detail_data, colWidths=[40*mm, 25*mm, 25*mm, 30*mm])
             dt.setStyle(TableStyle([
                 ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
@@ -871,7 +985,7 @@ class AppHandler(BaseHTTPRequestHandler):
             ]))
             elements.append(dt)
             elements.append(Spacer(1, 8 * mm))
-            elements.append(Paragraph(f"<b>TOTAL A PAGAR: {format_cop(total)}</b>", normal_style))
+            elements.append(Paragraph(f"<b>TOTAL A PAGAR: {format_cop(grand_total)}</b>", normal_style))
 
             # Viral footer
             viral_style = ParagraphStyle("Viral", parent=styles["Normal"], fontSize=6, textColor=colors.Color(0.4, 0.4, 0.4), fontName="Helvetica-Oblique", alignment=TA_CENTER, spaceBefore=10*mm)
@@ -881,8 +995,8 @@ class AppHandler(BaseHTTPRequestHandler):
             buffer.seek(0)
 
             safe_name = nombre.replace(" ", "_")
-            filename = f"Remision_{order_id}_{safe_name}.pdf"
-            caption = f"Remision #{order_id} - {order.get('cliente_nombre', '')} - {format_cop(total)}"
+            filename = f"Remision_{ref_id}_{safe_name}.pdf"
+            caption = f"Remision #{ref_id} - {ref_order.get('cliente_nombre', '')} - {format_cop(grand_total)}"
 
             sent = self._send_pdf_to_telegram(vendor_id, buffer, filename, caption)
             if sent:
@@ -894,32 +1008,46 @@ class AppHandler(BaseHTTPRequestHandler):
             self._send_error(500, str(e))
 
     def _api_generate_despacho(self, vendor_id, body):
-        """POST /api/documents/despacho — Generate despacho PDF and send to chat."""
+        """POST /api/documents/despacho — Generate despacho PDF (multi-product aware)."""
         from reportlab.lib.pagesizes import letter
         from reportlab.lib.units import mm
         from reportlab.lib import colors
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
         from reportlab.lib.enums import TA_CENTER
-        from database import get_vendedor, get_order
+        from database import get_vendedor, get_order, get_orders_by_group
         from utils import format_cop
 
         order_id = body.get('order_id')
-        if not order_id:
-            self._send_error(400, "order_id is required")
+        grupo_pedido = body.get('grupo_pedido')
+
+        if not order_id and not grupo_pedido:
+            self._send_error(400, "order_id or grupo_pedido is required")
             return
 
         try:
-            order_id = int(order_id)
             vendedor = get_vendedor(vendor_id)
-            order = get_order(order_id, vendor_id)
-
-            if not order:
-                self._send_error(404, "Pedido no encontrado")
-                return
-
             nombre = vendedor['nombre_negocio'] if vendedor else 'Mi Negocio'
-            total = order['cantidad'] * order['precio_venta']
+
+            # Collect items
+            if grupo_pedido:
+                orders = get_orders_by_group(grupo_pedido, vendor_id)
+                if not orders:
+                    self._send_error(404, "No se encontraron pedidos en este grupo")
+                    return
+                ref_order = orders[0]
+            else:
+                order = get_order(int(order_id), vendor_id)
+                if not order:
+                    self._send_error(404, "Pedido no encontrado")
+                    return
+                if order.get('grupo_pedido'):
+                    orders = get_orders_by_group(order['grupo_pedido'], vendor_id)
+                else:
+                    orders = [order]
+                ref_order = orders[0]
+
+            grand_total = sum(o['cantidad'] * o['precio_venta'] for o in orders)
             now = datetime.now()
             today_str = now.strftime("%d/%m/%Y")
             dispatch_id = now.strftime("%Y%m%d%H%M")
@@ -951,6 +1079,13 @@ class AppHandler(BaseHTTPRequestHandler):
             ])
 
             elements = []
+
+            # Logo
+            logo_el = self._build_logo_element(vendedor)
+            if logo_el:
+                elements.append(logo_el)
+                elements.append(Spacer(1, 3*mm))
+
             elements.append(Paragraph(f"<b>{nombre}</b>", company_style))
             elements.append(Spacer(1, 4*mm))
             elements.append(Paragraph("<b>DESPACHO DE MERCANCIA</b>", title_style))
@@ -958,17 +1093,20 @@ class AppHandler(BaseHTTPRequestHandler):
 
             t1 = Table([
                 [f"No. Remision: {dispatch_id}", f"Fecha: {today_str}"],
-                [f"Cliente: {order.get('cliente_nombre', '')}", f"Direccion: {order.get('cliente_dir') or ''}"],
+                [f"Cliente: {ref_order.get('cliente_nombre', '')}", f"Direccion: {ref_order.get('cliente_dir') or ''}"],
             ], colWidths=[half_width, half_width])
             t1.setStyle(green_grid)
             elements.append(t1)
             elements.append(Spacer(1, 4*mm))
 
             elements.append(Paragraph("  DETALLE DE MERCANCIA", section_style))
-            detail = [
-                ["Producto", "Cantidad", "Precio Unit.", "Total"],
-                [order["producto"], str(order["cantidad"]), format_cop(order["precio_venta"]), format_cop(total)],
-            ]
+
+            # Multi-product detail
+            detail = [["Producto", "Cantidad", "Precio Unit.", "Total"]]
+            for o in orders:
+                line_total = o['cantidad'] * o['precio_venta']
+                detail.append([o["producto"], str(o["cantidad"]), format_cop(o["precio_venta"]), format_cop(line_total)])
+
             dt = Table(detail, colWidths=[full_width*0.40, full_width*0.20, full_width*0.20, full_width*0.20])
             dt.setStyle(TableStyle([
                 ("GRID", (0, 0), (-1, -1), 0.5, brand_color),
@@ -979,7 +1117,7 @@ class AppHandler(BaseHTTPRequestHandler):
             ]))
             elements.append(dt)
             elements.append(Spacer(1, 5*mm))
-            elements.append(Paragraph(f"<b>TOTAL: {format_cop(total)}</b>", ParagraphStyle("Tot", parent=styles["Normal"], fontSize=12, fontName="Helvetica-Bold")))
+            elements.append(Paragraph(f"<b>TOTAL: {format_cop(grand_total)}</b>", ParagraphStyle("Tot", parent=styles["Normal"], fontSize=12, fontName="Helvetica-Bold")))
 
             # Viral footer
             viral_style = ParagraphStyle("DViral", parent=styles["Normal"], fontSize=6, textColor=colors.Color(0.4, 0.4, 0.4), fontName="Helvetica-Oblique", alignment=TA_CENTER, spaceBefore=10*mm)
@@ -990,7 +1128,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
             safe_name = nombre.replace(" ", "_")
             filename = f"Despacho_{safe_name}_{dispatch_id}.pdf"
-            caption = f"Despacho {nombre} - {order.get('cliente_nombre', '')} - {format_cop(total)}"
+            caption = f"Despacho {nombre} - {ref_order.get('cliente_nombre', '')} - {format_cop(grand_total)}"
 
             sent = self._send_pdf_to_telegram(vendor_id, buffer, filename, caption)
             if sent:
@@ -1040,6 +1178,13 @@ class AppHandler(BaseHTTPRequestHandler):
             footer_style = ParagraphStyle("PF", parent=styles["Normal"], fontSize=7, alignment=TA_CENTER, textColor=colors.gray, fontName="Helvetica-Oblique")
 
             elements = []
+
+            # Logo
+            logo_el = self._build_logo_element(vendedor)
+            if logo_el:
+                elements.append(logo_el)
+                elements.append(Spacer(1, 3*mm))
+
             elements.append(Paragraph(f"<b>{nombre}</b>", title_style))
             elements.append(Spacer(1, 3*mm))
             elements.append(Paragraph("<b>LISTA DE PRECIOS</b>", ParagraphStyle("PLT", parent=styles["Title"], fontSize=16, alignment=TA_CENTER, textColor=brand_blue)))

@@ -227,6 +227,10 @@ def init_database():
         )
     """)
 
+    # ── SCHEMA MIGRATIONS (safe to re-run) ──
+    cursor.execute("ALTER TABLE vendedores ADD COLUMN IF NOT EXISTS logo_base64 TEXT")
+    cursor.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS grupo_pedido TEXT")
+
     # ── INDEXES for multi-tenant query performance ──
     _create_indexes(cursor)
 
@@ -333,7 +337,7 @@ def register_vendedor(vendedor_id, nombre_negocio, telefono_soporte=""):
 
 def update_vendedor(vendedor_id, **fields):
     """Update vendor fields. Only whitelisted columns are allowed."""
-    allowed = {"nombre_negocio", "telefono_soporte", "estado", "fecha_vencimiento", "meta_mensual"}
+    allowed = {"nombre_negocio", "telefono_soporte", "estado", "fecha_vencimiento", "meta_mensual", "logo_base64"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
@@ -620,7 +624,7 @@ def search_clients(vendedor_id, query_text):
 # PEDIDOS (Orders — Tenant-Isolated)
 # =========================================================================
 
-def add_order(vendedor_id, cliente_id, producto, cantidad, precio_compra, precio_venta):
+def add_order(vendedor_id, cliente_id, producto, cantidad, precio_compra, precio_venta, grupo_pedido=None):
     """Create a new order. Returns the order ID."""
     today = date.today().isoformat()
     conn = get_connection(vendedor_id)
@@ -635,10 +639,10 @@ def add_order(vendedor_id, cliente_id, producto, cantidad, precio_compra, precio
 
         cursor = conn.execute(
             """INSERT INTO pedidos
-               (vendedor_id, cliente_id, producto, cantidad, precio_compra, precio_venta, estado, estado_pago, fecha)
-               VALUES (%s, %s, %s, %s, %s, %s, 'Pendiente', 'Pendiente', %s)
+               (vendedor_id, cliente_id, producto, cantidad, precio_compra, precio_venta, estado, estado_pago, fecha, grupo_pedido)
+               VALUES (%s, %s, %s, %s, %s, %s, 'Pendiente', 'Pendiente', %s, %s)
                RETURNING id""",
-            (vendedor_id, cliente_id, producto, cantidad, precio_compra, precio_venta, today),
+            (vendedor_id, cliente_id, producto, cantidad, precio_compra, precio_venta, today, grupo_pedido),
         )
         order_id = cursor.fetchone()["id"]
 
@@ -649,6 +653,56 @@ def add_order(vendedor_id, cliente_id, producto, cantidad, precio_compra, precio
         )
         conn.commit()
         return order_id
+    finally:
+        conn.close()
+
+
+def add_order_batch(vendedor_id, cliente_id, items):
+    """Create a multi-product order. All items share the same grupo_pedido.
+    items = [{producto, cantidad, precio_venta, precio_compra, update_price}]
+    Returns the grupo_pedido UUID."""
+    import uuid
+    grupo = str(uuid.uuid4())[:8]  # Short UUID for readability
+    order_ids = []
+    for item in items:
+        oid = add_order(
+            vendedor_id, cliente_id,
+            item['producto'], item['cantidad'],
+            item.get('precio_compra', 0), item['precio_venta'],
+            grupo_pedido=grupo,
+        )
+        order_ids.append(oid)
+        # Auto-update product price if user entered a different one
+        if item.get('update_price'):
+            update_product_price(vendedor_id, item['producto'], item['precio_venta'])
+    return grupo, order_ids
+
+
+def update_product_price(vendedor_id, producto_nombre, nuevo_precio):
+    """Update the sell price of a product by name. Tenant-isolated."""
+    conn = get_connection(vendedor_id)
+    try:
+        conn.execute(
+            "UPDATE productos SET precio_venta = %s WHERE vendedor_id = %s AND nombre = %s",
+            (nuevo_precio, vendedor_id, producto_nombre),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_orders_by_group(grupo_pedido, vendedor_id):
+    """Get all orders in a group with client info. For multi-product remision."""
+    conn = get_connection(vendedor_id)
+    try:
+        return conn.execute(
+            """SELECT p.*, c.nombre as cliente_nombre, c.direccion as cliente_dir,
+                      c.telefono as cliente_tel
+               FROM pedidos p JOIN clientes c ON p.cliente_id = c.id
+               WHERE p.grupo_pedido = %s AND p.vendedor_id = %s
+               ORDER BY p.id""",
+            (grupo_pedido, vendedor_id),
+        ).fetchall()
     finally:
         conn.close()
 

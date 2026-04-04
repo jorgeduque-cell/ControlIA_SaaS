@@ -16,7 +16,7 @@
   <meta http-equiv="Expires" content="0">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="./style.css?v=9">
+  <link rel="stylesheet" href="./style.css?v=10">
 </head>
 <body>
 
@@ -297,6 +297,16 @@
           </div>
           <span style="font-size:0.75rem;color:var(--c-text-muted);margin-top:4px;" id="acct-sub-text">Suscripción activa</span>
         </div>
+        <!-- Logo Upload -->
+        <div class="glass-card glass-card--elevated" style="margin-top:16px;">
+          <h4 style="font-weight:600;margin-bottom:10px;">📷 Logo del Negocio</h4>
+          <p style="font-size:0.8rem;color:var(--c-text-muted);margin-bottom:10px;">Sube tu logo para que aparezca en remisiones y cotizaciones (máx 200KB)</p>
+          <div id="logo-preview" style="text-align:center;margin-bottom:10px;"></div>
+          <input type="file" id="logo-file-input" accept="image/*" style="display:none;">
+          <button class="btn btn--accent w-full" onclick="document.getElementById('logo-file-input').click();" id="logo-upload-btn">
+            📤 Subir Logo
+          </button>
+        </div>
 
         <button class="btn btn--secondary" onclick="App.showScreen('dashboard')">
           ← Volver al Panel
@@ -412,6 +422,6 @@
   <div class="confetti-container" id="confetti" aria-hidden="true"></div>
 
   <!-- App Logic -->
-  <script src="./app.js?v=9"></script>
+  <script src="./app.js?v=10"></script>
 </body>
 </html>
