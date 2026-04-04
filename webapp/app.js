@@ -746,26 +746,28 @@ const App = {
 
       const list = document.getElementById('action-list');
       list.innerHTML = '';
+
+      const self = this;
       mod.commands.forEach(cmd => {
         const item = document.createElement('div');
         item.className = 'action-item';
-        item.setAttribute('data-cmd', cmd.cmd);
+        item.style.cssText = 'cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:rgba(108,60,225,0.2);user-select:none;-webkit-user-select:none;';
+
         item.innerHTML = `
           <span class="action-item__icon">${cmd.icon}</span>
           <span class="action-item__label">${cmd.label}</span>
           <span class="action-item__arrow">→</span>
         `;
+
+        // Direct click listener per item (more reliable in Telegram WebView)
+        item.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          self.executeCommand(cmd.cmd);
+        });
+
         list.appendChild(item);
       });
-
-      list.onclick = (e) => {
-        const item = e.target.closest('[data-cmd]');
-        if (item) {
-          e.preventDefault();
-          const cmd = item.getAttribute('data-cmd');
-          this.executeCommand(cmd);
-        }
-      };
 
       pushNav('module');
     } catch(e) {

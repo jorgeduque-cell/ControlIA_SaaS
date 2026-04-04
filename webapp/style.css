@@ -179,23 +179,23 @@ input, textarea { font-family: inherit; }
 /* ── SCREEN SYSTEM ── */
 .screen {
   display: none;
-  opacity: 0;
-  transform: translateY(12px);
-  transition: opacity var(--t-base), transform var(--t-base);
   width: 100%;
 }
 
 .screen.active {
   display: flex;
   flex-direction: column;
-  opacity: 1;
-  transform: translateY(0);
-  animation: screenIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-@keyframes screenIn {
-  from { opacity: 0; transform: translateY(16px); }
-  to { opacity: 1; transform: translateY(0); }
+/* ── TELEGRAM WEBVIEW TOUCH FIXES ── */
+.action-item,
+.module-card,
+.btn,
+[role="button"] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: rgba(108, 60, 225, 0.2);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 
