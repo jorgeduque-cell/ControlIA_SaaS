@@ -1193,6 +1193,274 @@ App._rwResults = function(data, radius) {
   _rwRender('🗺️ ' + data.stops.length + ' Negocios Encontrados', html);
 };
 
+// ─── ROUTE MODE SELECTOR ───
+
+// Launch prospect wizard
+App._rwProspect = function() {
+  App._rw = { types: [], exclusions: [], customType: '' };
+  App._rwStep1();
+};
+
+// Launch "from my clients" flow — Step 1: Starting point
+App._rwFromClients = function() {
+  App._clientRoute = {};
+  var html =
+    '<div class="glass-card" style="padding:20px;margin-bottom:12px;">' +
+      '<h4 style="font-weight:700;margin-bottom:12px;">📍 ¿Desde dónde sales hoy?</h4>' +
+      '<button class="btn btn--primary w-full" onclick="App._crGPS()" id="cr-gps-btn" style="margin-bottom:16px;">' +
+        '<span id="cr-gps-text">📡 Usar mi ubicación actual</span>' +
+        '<div id="cr-gps-spinner" class="btn__spinner hidden"></div>' +
+      '</button>' +
+      '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">' +
+        '<div style="flex:1;height:1px;background:var(--c-border);"></div>' +
+        '<span style="color:var(--c-text-muted);font-size:0.8rem;">o escribe una dirección / zona</span>' +
+        '<div style="flex:1;height:1px;background:var(--c-border);"></div>' +
+      '</div>' +
+      '<input type="text" id="cr-address" placeholder="Ej: Zona Norte, Calle 80, Bogotá" ' +
+        'style="width:100%;padding:12px 14px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:10px;color:var(--c-text);font-size:0.9rem;outline:none;box-sizing:border-box;margin-bottom:10px;">' +
+      '<button class="btn btn--secondary w-full" onclick="App._crGeocode()" id="cr-geo-btn">' +
+        '<span id="cr-geo-text">🔍 Buscar</span>' +
+        '<div id="cr-geo-spinner" class="btn__spinner hidden"></div>' +
+      '</button>' +
+    '</div>';
+
+  _rwRender('👥 Ruta con Clientes', html);
+  pushNav('data-result');
+
+  setTimeout(function() {
+    var inp = document.getElementById('cr-address');
+    if (inp) inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); App._crGeocode(); }
+    });
+  }, 100);
+};
+
+App._crGPS = function() {
+  var btn = document.getElementById('cr-gps-btn');
+  var text = document.getElementById('cr-gps-text');
+  var spin = document.getElementById('cr-gps-spinner');
+  if (btn) btn.disabled = true;
+  if (text) text.classList.add('hidden');
+  if (spin) spin.classList.remove('hidden');
+
+  if (!navigator.geolocation) {
+    showToast('Tu dispositivo no soporta GPS', 'error');
+    if (btn) btn.disabled = false; if (text) text.classList.remove('hidden'); if (spin) spin.classList.add('hidden');
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    function(pos) {
+      App._clientRoute.lat = pos.coords.latitude;
+      App._clientRoute.lng = pos.coords.longitude;
+      App._clientRoute.label = 'GPS: ' + pos.coords.latitude.toFixed(4) + ', ' + pos.coords.longitude.toFixed(4);
+      haptic('success');
+      App._crLoadClients();
+    },
+    function() {
+      showToast('No se pudo obtener ubicación', 'error');
+      if (btn) btn.disabled = false; if (text) text.classList.remove('hidden'); if (spin) spin.classList.add('hidden');
+    },
+    { enableHighAccuracy: true, timeout: 15000 }
+  );
+};
+
+App._crGeocode = function() {
+  var inp = document.getElementById('cr-address');
+  var addr = inp ? inp.value.trim() : '';
+  if (!addr) { showToast('Escribe una dirección o zona', 'error'); return; }
+
+  var btn = document.getElementById('cr-geo-btn');
+  var text = document.getElementById('cr-geo-text');
+  var spin = document.getElementById('cr-geo-spinner');
+  if (btn) btn.disabled = true;
+  if (text) text.classList.add('hidden');
+  if (spin) spin.classList.remove('hidden');
+
+  API.post('/api/geocode', { address: addr })
+    .then(function(data) {
+      if (!data.found) {
+        showToast('No se encontró. Intenta ser más específico.', 'error');
+        if (btn) btn.disabled = false; if (text) text.classList.remove('hidden'); if (spin) spin.classList.add('hidden');
+        return;
+      }
+      App._clientRoute.lat = data.lat;
+      App._clientRoute.lng = data.lng;
+      App._clientRoute.label = addr;
+      haptic('success');
+      App._crLoadClients();
+    })
+    .catch(function() {
+      showToast('Error buscando dirección', 'error');
+      if (btn) btn.disabled = false; if (text) text.classList.remove('hidden'); if (spin) spin.classList.add('hidden');
+    });
+};
+
+// Step 2: Load clients and show checklist
+App._crLoadClients = function() {
+  _rwRender('👥 Cargando clientes...',
+    '<div class="glass-card" style="text-align:center;padding:24px;">' +
+      '<div class="btn__spinner" style="border-color:rgba(108,60,225,0.3);border-top-color:#6C3CE1;margin:0 auto 12px;"></div>' +
+      '<p style="color:var(--c-text-muted);font-size:0.85rem;">Buscando clientes con dirección...</p>' +
+    '</div>'
+  );
+
+  API.get('/api/clients')
+    .then(function(data) {
+      var items = data.items || [];
+      // Filter only clients with address
+      var withAddr = items.filter(function(c) { return c.direccion && c.direccion.trim(); });
+
+      if (withAddr.length === 0) {
+        _rwRender('👥 Sin Clientes',
+          '<div class="glass-card" style="text-align:center;padding:24px;">' +
+            '<div style="font-size:3rem;margin-bottom:12px;">📭</div>' +
+            '<p style="color:var(--c-text-muted);margin-bottom:16px;">No tienes clientes con dirección registrada.</p>' +
+            '<button class="btn btn--primary w-full" onclick="CMD_HANDLERS.nuevo_cliente()">👤 Agregar Cliente</button>' +
+          '</div>'
+        );
+        return;
+      }
+
+      App._clientRoute.clients = withAddr;
+
+      var html =
+        '<div class="glass-card" style="padding:12px;margin-bottom:10px;">' +
+          '<p style="font-weight:600;font-size:0.85rem;">📍 Punto de inicio: <span style="color:var(--c-accent);">' + App._clientRoute.label + '</span></p>' +
+        '</div>' +
+        '<div class="glass-card" style="padding:14px;margin-bottom:10px;">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+            '<h4 style="font-weight:700;margin:0;">Selecciona los clientes a visitar</h4>' +
+            '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.8rem;color:var(--c-accent);">' +
+              '<input type="checkbox" id="cr-select-all" onchange="App._crToggleAll(this.checked)" style="accent-color:var(--c-accent);"> Todos' +
+            '</label>' +
+          '</div>';
+
+      withAddr.forEach(function(c, i) {
+        html +=
+          '<label style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;cursor:pointer;' +
+            (i < withAddr.length - 1 ? 'border-bottom:1px solid var(--c-border);' : '') + '">' +
+            '<input type="checkbox" class="cr-client-cb" value="' + c.id + '" style="accent-color:var(--c-accent);margin-top:3px;" checked>' +
+            '<div style="flex:1;min-width:0;">' +
+              '<div style="font-weight:600;font-size:0.9rem;">' + c.nombre + '</div>' +
+              '<div style="font-size:0.75rem;color:var(--c-text-muted);margin-top:2px;">' + c.direccion + '</div>' +
+              (c.telefono ? '<div style="font-size:0.7rem;color:var(--c-text-secondary);margin-top:1px;">📞 ' + c.telefono + '</div>' : '') +
+            '</div>' +
+          '</label>';
+      });
+
+      html += '</div>' +
+        '<button class="btn btn--accent w-full" onclick="App._crBuildRoute()" id="cr-build-btn" style="margin-top:10px;">' +
+          '<span id="cr-build-text">🗺️ Generar Ruta Optimizada</span>' +
+          '<div id="cr-build-spinner" class="btn__spinner hidden"></div>' +
+        '</button>';
+
+      _rwRender('👥 ' + withAddr.length + ' Clientes con Dirección', html);
+
+      // Pre-check "select all"
+      setTimeout(function() {
+        var selAll = document.getElementById('cr-select-all');
+        if (selAll) selAll.checked = true;
+      }, 50);
+    })
+    .catch(function() {
+      showToast('Error cargando clientes', 'error');
+    });
+};
+
+App._crToggleAll = function(checked) {
+  var cbs = document.querySelectorAll('.cr-client-cb');
+  cbs.forEach(function(cb) { cb.checked = checked; });
+};
+
+// Step 3: Build route
+App._crBuildRoute = function() {
+  var cbs = document.querySelectorAll('.cr-client-cb:checked');
+  var ids = [];
+  cbs.forEach(function(cb) { ids.push(parseInt(cb.value)); });
+
+  if (ids.length === 0) {
+    showToast('Selecciona al menos un cliente', 'error');
+    return;
+  }
+
+  var btn = document.getElementById('cr-build-btn');
+  var text = document.getElementById('cr-build-text');
+  var spin = document.getElementById('cr-build-spinner');
+  if (btn) btn.disabled = true;
+  if (text) text.classList.add('hidden');
+  if (spin) spin.classList.remove('hidden');
+
+  API.post('/api/routes/clients', {
+    client_ids: ids,
+    origin_lat: App._clientRoute.lat,
+    origin_lng: App._clientRoute.lng,
+    profile: 'foot-walking',
+  })
+    .then(function(data) {
+      haptic('success');
+      var html = '';
+
+      if (data.errors && data.errors.length > 0) {
+        html +=
+          '<div class="glass-card" style="padding:14px;margin-bottom:12px;border:1px solid rgba(255,107,157,0.3);">' +
+            '<p style="font-size:0.8rem;color:#FF6B9D;font-weight:600;margin-bottom:4px;">⚠️ ' + data.errors.length + ' clientes sin ubicar:</p>' +
+            '<p style="font-size:0.75rem;color:var(--c-text-muted);margin:0;">' + data.errors.join('<br>') + '</p>' +
+          '</div>';
+      }
+
+      if (data.stops && data.stops.length > 0) {
+        html +=
+          '<div class="glass-card" style="padding:16px;margin-bottom:12px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+              '<div>' +
+                '<span style="font-size:1.5rem;font-weight:700;color:var(--c-accent);">' + data.stops.length + '</span>' +
+                '<span style="color:var(--c-text-muted);font-size:0.85rem;"> clientes en ruta</span>' +
+              '</div>' +
+              '<div><span style="font-size:0.85rem;color:var(--c-text-muted);">⏱️ ~' + (data.total_time_min || 0) + ' min</span></div>' +
+            '</div>' +
+          '</div>';
+
+        if (data.google_maps_url) {
+          html +=
+            '<a href="' + data.google_maps_url + '" target="_blank" class="btn btn--accent w-full" ' +
+              'style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:12px;text-decoration:none;">' +
+              '🗺️ Abrir Ruta en Google Maps' +
+            '</a>';
+        }
+
+        html += '<div class="glass-card" style="padding:16px;">';
+        data.stops.forEach(function(stop, i) {
+          html +=
+            '<div style="display:flex;gap:12px;padding:10px 0;' + (i < data.stops.length - 1 ? 'border-bottom:1px solid var(--c-border);' : '') + '">' +
+              '<div style="width:28px;height:28px;border-radius:50%;background:var(--c-accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:700;flex-shrink:0;">' + (i + 1) + '</div>' +
+              '<div style="flex:1;min-width:0;">' +
+                '<div style="font-weight:600;font-size:0.9rem;">👤 ' + stop.name + '</div>' +
+                (stop.address ? '<div style="font-size:0.75rem;color:var(--c-text-muted);margin-top:2px;">' + stop.address + '</div>' : '') +
+                (stop.phone ? '<div style="font-size:0.7rem;color:var(--c-text-secondary);margin-top:1px;">📞 ' + stop.phone + '</div>' : '') +
+              '</div>' +
+            '</div>';
+        });
+        html += '</div>';
+      } else {
+        html +=
+          '<div class="glass-card" style="text-align:center;padding:24px;">' +
+            '<div style="font-size:3rem;margin-bottom:12px;">📭</div>' +
+            '<p style="color:var(--c-text-muted);">No se pudo geocodificar ninguna dirección.</p>' +
+          '</div>';
+      }
+
+      html += '<button class="btn btn--secondary w-full" style="margin-top:12px;" onclick="App._rwFromClients()">🔄 Armar otra ruta</button>';
+      _rwRender('🗺️ Ruta Optimizada', html);
+    })
+    .catch(function(err) {
+      haptic('error');
+      showToast('Error: ' + (err.message || 'Intenta de nuevo'), 'error');
+      if (btn) btn.disabled = false;
+      if (text) text.classList.remove('hidden');
+      if (spin) spin.classList.add('hidden');
+    });
+};
+
 // ─── EXCEL UPLOAD HANDLERS ───
 
 App._excelRouteUpload = function(input) {
@@ -2218,8 +2486,22 @@ var CMD_HANDLERS = {
   },
 
   ruta_pie: function() {
-    App._rw = { types: [], exclusions: [], customType: '' };
-    App._rwStep1();
+    _rwRender('🚶 Ruta a Pie',
+      '<div class="glass-card" style="padding:20px;margin-bottom:12px;">' +
+        '<h4 style="font-weight:700;margin-bottom:16px;text-align:center;">¿Cómo quieres armar tu ruta?</h4>' +
+
+        '<button class="btn btn--primary w-full" style="margin-bottom:10px;" onclick="App._rwFromClients()">' +
+          '👥 Con mis clientes registrados' +
+        '</button>' +
+        '<p style="font-size:0.75rem;color:var(--c-text-muted);margin:0 0 16px 0;text-align:center;">Selecciona clientes de tu cartera para generar ruta optimizada</p>' +
+
+        '<button class="btn btn--secondary w-full" style="margin-bottom:10px;" onclick="App._rwProspect()">' +
+          '🔍 Prospectar negocios nuevos' +
+        '</button>' +
+        '<p style="font-size:0.75rem;color:var(--c-text-muted);margin:0;text-align:center;">Busca negocios cercanos a una ubicación y genera ruta</p>' +
+      '</div>'
+    );
+    pushNav('data-result');
   },
 
   ruta_camion: function() {
