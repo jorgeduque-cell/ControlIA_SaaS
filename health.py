@@ -2071,7 +2071,7 @@ class AppHandler(BaseHTTPRequestHandler):
                         errors.append(client['nombre'] + ': ' + addr)
                         continue
                     if i < len(with_addr) - 1:
-                        _time.sleep(1.1)
+                        _time.sleep(1.5)
 
                 dist = haversine(origin_lat, origin_lng, clat, clng)
                 if dist <= radius_km:

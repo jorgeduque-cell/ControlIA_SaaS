@@ -31,30 +31,43 @@ from config import (
 def geocode_nominatim(address, country_code="co"):
     """Convert an address to (lat, lng) using Nominatim OSM.
     Free, no API key needed. Rate limit: 1 req/sec (enforced by User-Agent policy).
+    Retries up to 3 times on 429 (Too Many Requests) with exponential backoff.
 
     Returns:
         tuple: (lat, lng) or (None, None) if not found.
     """
-    try:
-        resp = requests.get(
-            f"{NOMINATIM_URL}/search",
-            params={
-                "q": address,
-                "format": "json",
-                "limit": 1,
-                "countrycodes": country_code,
-            },
-            headers={"User-Agent": "ControlIA-SaaS/2.0 (Telegram Bot)"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if data:
-            return float(data[0]["lat"]), float(data[0]["lon"])
-        return None, None
-    except Exception as e:
-        logger.error("Nominatim geocode error: %s", e)
-        return None, None
+    import time as _time
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(
+                f"{NOMINATIM_URL}/search",
+                params={
+                    "q": address,
+                    "format": "json",
+                    "limit": 1,
+                    "countrycodes": country_code,
+                },
+                headers={"User-Agent": "ControlIA-SaaS/2.0 (Telegram Bot)"},
+                timeout=10,
+            )
+            if resp.status_code == 429:
+                wait = 2 ** (attempt + 1)  # 2s, 4s, 8s
+                logger.warning("Nominatim 429 rate limit, waiting %ds (attempt %d/%d)", wait, attempt + 1, max_retries)
+                _time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            if data:
+                return float(data[0]["lat"]), float(data[0]["lon"])
+            return None, None
+        except Exception as e:
+            logger.error("Nominatim geocode error: %s", e)
+            if attempt < max_retries - 1:
+                _time.sleep(2)
+                continue
+            return None, None
+    return None, None
 
 
 # =========================================================================
