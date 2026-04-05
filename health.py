@@ -1964,41 +1964,39 @@ class AppHandler(BaseHTTPRequestHandler):
                     return str(cells[idx] or '').strip()
                 return ''
 
-            # Extract and insert
-            conn = get_connection(vendor_id)
+            # Extract and insert using existing database function
+            from database import add_client
             inserted = 0
             skipped = 0
-            try:
-                for row in data_rows:
-                    cells = list(row)
-                    name = _cell(cells, 'nombre')
-                    if not name:
-                        continue
+            for row in data_rows:
+                cells = list(row)
+                name = _cell(cells, 'nombre')
+                if not name:
+                    continue
 
-                    phone = _cell(cells, 'telefono')
-                    address = _cell(cells, 'direccion')
-                    biz_type = _cell(cells, 'tipo_negocio')
-                    visit_day = _cell(cells, 'dia_visita')
-                    zona = _cell(cells, 'zona')
+                phone = _cell(cells, 'telefono')
+                address = _cell(cells, 'direccion')
+                biz_type = _cell(cells, 'tipo_negocio')
+                visit_day = _cell(cells, 'dia_visita')
+                zona = _cell(cells, 'zona')
 
-                    # Append zona to address if present
-                    if zona and address:
-                        address = f"{address} — Zona: {zona}"
-                    elif zona and not address:
-                        address = f"Zona: {zona}"
+                # Append zona to address if present
+                if zona and address:
+                    address = f"{address} — Zona: {zona}"
+                elif zona and not address:
+                    address = f"Zona: {zona}"
 
-                    try:
-                        conn.execute("""
-                            INSERT INTO clientes (vendedor_id, nombre, telefono, direccion, tipo_negocio, dia_visita, tipo_cliente)
-                            VALUES (%s, %s, %s, %s, %s, %s, 'Cliente')
-                        """, (vendor_id, name, phone, address, biz_type, visit_day))
-                        inserted += 1
-                    except Exception:
-                        skipped += 1
-
-                conn.commit()
-            finally:
-                conn.close()
+                try:
+                    add_client(vendor_id, {
+                        "nombre": name,
+                        "telefono": phone,
+                        "direccion": address,
+                        "tipo_negocio": biz_type,
+                        "dia_visita": visit_day,
+                    })
+                    inserted += 1
+                except Exception:
+                    skipped += 1
 
             logger.info("CLIENT IMPORT: vendor=%s inserted=%d skipped=%d", vendor_id, inserted, skipped)
             self._json_response({
