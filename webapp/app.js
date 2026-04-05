@@ -50,7 +50,9 @@ var MODULES = {
       { icon: '📦', label: 'Control de Inventario', cmd: 'inventario' },
       { icon: '🚶', label: 'Ruta a Pie', cmd: 'ruta_pie' },
       { icon: '🚛', label: 'Ruta en Camión', cmd: 'ruta_camion' },
-      { icon: '📅', label: 'Ruta Semanal', cmd: 'ruta_semanal' }
+      { icon: '📅', label: 'Ruta Semanal', cmd: 'ruta_semanal' },
+      { icon: '📋', label: 'Ruta desde Excel', cmd: 'ruta_excel' },
+      { icon: '📥', label: 'Importar Clientes (Excel)', cmd: 'importar_clientes' }
     ]
   },
   finanzas: {
@@ -1191,6 +1193,152 @@ App._rwResults = function(data, radius) {
   _rwRender('🗺️ ' + data.stops.length + ' Negocios Encontrados', html);
 };
 
+// ─── EXCEL UPLOAD HANDLERS ───
+
+App._excelRouteUpload = function(input) {
+  if (!input.files || !input.files[0]) return;
+  var file = input.files[0];
+
+  if (!file.name.match(/\.xlsx?$/i)) {
+    showToast('Solo archivos .xlsx', 'error');
+    return;
+  }
+
+  // Show loading state
+  _rwRender('📋 Procesando Excel',
+    '<div class="glass-card" style="text-align:center;padding:24px;">' +
+      '<div class="btn__spinner" style="border-color:rgba(108,60,225,0.3);border-top-color:#6C3CE1;margin:0 auto 16px;"></div>' +
+      '<h3 style="font-weight:700;margin-bottom:8px;">Procesando ' + file.name + '...</h3>' +
+      '<p style="color:var(--c-text-muted);font-size:0.8rem;">Geocodificando direcciones y optimizando ruta.<br>Esto puede tardar hasta 30 segundos.</p>' +
+    '</div>'
+  );
+
+  // Get profile
+  var profileRadios = document.querySelectorAll('input[name="rw-excel-profile"]');
+  var profile = 'driving-car';
+  profileRadios.forEach(function(r) { if (r.checked) profile = r.value; });
+
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var base64 = e.target.result.split(',')[1]; // Remove data:...;base64, prefix
+    API.post('/api/routes/excel', { file: base64, profile: profile })
+      .then(function(data) {
+        haptic('success');
+        // Build results
+        var html = '';
+
+        if (data.errors && data.errors.length > 0) {
+          html +=
+            '<div class="glass-card" style="padding:14px;margin-bottom:12px;border:1px solid rgba(255,107,157,0.3);">' +
+              '<p style="font-size:0.8rem;color:#FF6B9D;font-weight:600;margin-bottom:4px;">⚠️ ' + data.errors.length + ' direcciones no encontradas:</p>' +
+              '<p style="font-size:0.75rem;color:var(--c-text-muted);margin:0;">' + data.errors.join('<br>') + '</p>' +
+            '</div>';
+        }
+
+        if (data.stops && data.stops.length > 0) {
+          html +=
+            '<div class="glass-card" style="padding:16px;margin-bottom:12px;">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+                '<div>' +
+                  '<span style="font-size:1.5rem;font-weight:700;color:var(--c-accent);">' + data.stops.length + '</span>' +
+                  '<span style="color:var(--c-text-muted);font-size:0.85rem;"> paradas en ruta</span>' +
+                '</div>' +
+                '<div><span style="font-size:0.85rem;color:var(--c-text-muted);">⏱️ ~' + (data.total_time_min || 0) + ' min</span></div>' +
+              '</div>' +
+            '</div>';
+
+          if (data.google_maps_url) {
+            html +=
+              '<a href="' + data.google_maps_url + '" target="_blank" class="btn btn--accent w-full" ' +
+                'style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:12px;text-decoration:none;">' +
+                '🗺️ Abrir Ruta en Google Maps' +
+              '</a>';
+          }
+
+          html += '<div class="glass-card" style="padding:16px;">';
+          data.stops.forEach(function(stop, i) {
+            html +=
+              '<div style="display:flex;gap:12px;padding:10px 0;' + (i < data.stops.length - 1 ? 'border-bottom:1px solid var(--c-border);' : '') + '">' +
+                '<div style="width:28px;height:28px;border-radius:50%;background:var(--c-accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:700;flex-shrink:0;">' + (i + 1) + '</div>' +
+                '<div style="flex:1;min-width:0;">' +
+                  '<div style="font-weight:600;font-size:0.9rem;">📍 ' + stop.name + '</div>' +
+                  (stop.address ? '<div style="font-size:0.75rem;color:var(--c-text-muted);margin-top:2px;">' + stop.address + '</div>' : '') +
+                '</div>' +
+              '</div>';
+          });
+          html += '</div>';
+        } else {
+          html +=
+            '<div class="glass-card" style="text-align:center;padding:24px;">' +
+              '<div style="font-size:3rem;margin-bottom:12px;">📭</div>' +
+              '<p style="color:var(--c-text-muted);">No se pudieron geocodificar las direcciones.</p>' +
+            '</div>';
+        }
+
+        html += '<button class="btn btn--secondary w-full" style="margin-top:12px;" onclick="CMD_HANDLERS.ruta_excel()">🔄 Subir otro archivo</button>';
+        _rwRender('📋 Ruta Optimizada', html);
+      })
+      .catch(function(err) {
+        haptic('error');
+        showToast('Error: ' + (err.message || 'Intenta de nuevo'), 'error');
+        CMD_HANDLERS.ruta_excel();
+      });
+  };
+  reader.readAsDataURL(file);
+};
+
+App._excelClientUpload = function(input) {
+  if (!input.files || !input.files[0]) return;
+  var file = input.files[0];
+
+  if (!file.name.match(/\.xlsx?$/i)) {
+    showToast('Solo archivos .xlsx', 'error');
+    return;
+  }
+
+  _rwRender('📥 Importando',
+    '<div class="glass-card" style="text-align:center;padding:24px;">' +
+      '<div class="btn__spinner" style="border-color:rgba(108,60,225,0.3);border-top-color:#6C3CE1;margin:0 auto 16px;"></div>' +
+      '<h3 style="font-weight:700;margin-bottom:8px;">Importando ' + file.name + '...</h3>' +
+      '<p style="color:var(--c-text-muted);font-size:0.8rem;">Leyendo clientes del archivo Excel.</p>' +
+    '</div>'
+  );
+
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var base64 = e.target.result.split(',')[1];
+    API.post('/api/clients/import', { file: base64 })
+      .then(function(data) {
+        haptic('success');
+        _rwRender('📥 Importación Completa',
+          '<div class="glass-card" style="text-align:center;padding:24px;">' +
+            '<div style="font-size:3rem;margin-bottom:12px;">✅</div>' +
+            '<h3 style="font-weight:700;margin-bottom:16px;">Importación Exitosa</h3>' +
+            '<div style="display:flex;gap:12px;justify-content:center;margin-bottom:16px;">' +
+              '<div class="glass-card" style="padding:14px 20px;text-align:center;">' +
+                '<div style="font-size:1.5rem;font-weight:700;color:#00E676;">' + data.inserted + '</div>' +
+                '<div style="font-size:0.75rem;color:var(--c-text-muted);">Importados</div>' +
+              '</div>' +
+              (data.skipped > 0 ?
+                '<div class="glass-card" style="padding:14px 20px;text-align:center;">' +
+                  '<div style="font-size:1.5rem;font-weight:700;color:#FF6B9D;">' + data.skipped + '</div>' +
+                  '<div style="font-size:0.75rem;color:var(--c-text-muted);">Omitidos</div>' +
+                '</div>' : '') +
+            '</div>' +
+            '<button class="btn btn--primary w-full" onclick="CMD_HANDLERS.clientes()">👥 Ver Cartera</button>' +
+            '<button class="btn btn--ghost w-full" style="margin-top:6px;" onclick="CMD_HANDLERS.importar_clientes()">📥 Importar otro</button>' +
+          '</div>'
+        );
+      })
+      .catch(function(err) {
+        haptic('error');
+        showToast('Error: ' + (err.message || 'Intenta de nuevo'), 'error');
+        CMD_HANDLERS.importar_clientes();
+      });
+  };
+  reader.readAsDataURL(file);
+};
+
 
 // ─── COMMAND HANDLERS ───
 var CMD_HANDLERS = {
@@ -2106,6 +2254,72 @@ var CMD_HANDLERS = {
           '<p style="color:var(--c-accent);font-weight:600;font-size:0.95rem;">Escribe <code>/ruta_semanal</code> en el chat del bot</p>' +
         '</div>';
     }
+    pushNav('data-result');
+  },
+
+  ruta_excel: function() {
+    _rwRender('📋 Ruta desde Excel',
+      '<div class="glass-card" style="padding:20px;margin-bottom:12px;">' +
+        '<div style="text-align:center;margin-bottom:16px;">' +
+          '<div style="font-size:3rem;margin-bottom:8px;">📋</div>' +
+          '<h3 style="font-weight:700;margin-bottom:6px;">Optimizar Ruta desde Excel</h3>' +
+          '<p style="color:var(--c-text-muted);font-size:0.8rem;">Sube un archivo Excel (.xlsx) con las direcciones de tus clientes y generaremos la ruta más eficiente.</p>' +
+        '</div>' +
+        '<div class="glass-card" style="padding:14px;margin-bottom:16px;background:var(--c-bg-input);border:1px dashed var(--c-border);">' +
+          '<p style="font-size:0.8rem;color:var(--c-text-muted);margin-bottom:8px;"><b>📌 Formato requerido:</b></p>' +
+          '<p style="font-size:0.8rem;color:var(--c-text-secondary);line-height:1.6;margin:0;">' +
+            'El Excel debe tener al menos una columna llamada:<br>' +
+            '• <b>Dirección</b> (o Address, Domicilio, Ubicación)<br>' +
+            '• Opcional: <b>Nombre</b> (o Cliente, Negocio)' +
+          '</p>' +
+        '</div>' +
+        '<label style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px;border:2px dashed var(--c-accent);border-radius:12px;cursor:pointer;transition:opacity 0.2s;" id="rw-excel-drop">' +
+          '<span style="font-size:1.5rem;">📁</span>' +
+          '<span style="font-size:0.85rem;color:var(--c-accent);font-weight:600;">Toca para seleccionar archivo</span>' +
+          '<span style="font-size:0.75rem;color:var(--c-text-muted);">.xlsx solamente</span>' +
+          '<input type="file" accept=".xlsx,.xls" id="rw-excel-file" style="display:none;" onchange="App._excelRouteUpload(this)">' +
+        '</label>' +
+        '<div style="display:flex;gap:8px;margin-top:14px;">' +
+          '<label style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:10px;cursor:pointer;">' +
+            '<input type="radio" name="rw-excel-profile" value="driving-car" checked style="accent-color:var(--c-accent);">' +
+            '<span style="font-size:0.85rem;">🚛 Vehículo</span>' +
+          '</label>' +
+          '<label style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:10px;cursor:pointer;">' +
+            '<input type="radio" name="rw-excel-profile" value="foot-walking" style="accent-color:var(--c-accent);">' +
+            '<span style="font-size:0.85rem;">🚶 A pie</span>' +
+          '</label>' +
+        '</div>' +
+      '</div>'
+    );
+    pushNav('data-result');
+  },
+
+  importar_clientes: function() {
+    _rwRender('📥 Importar Clientes',
+      '<div class="glass-card" style="padding:20px;margin-bottom:12px;">' +
+        '<div style="text-align:center;margin-bottom:16px;">' +
+          '<div style="font-size:3rem;margin-bottom:8px;">📥</div>' +
+          '<h3 style="font-weight:700;margin-bottom:6px;">Importar Clientes desde Excel</h3>' +
+          '<p style="color:var(--c-text-muted);font-size:0.8rem;">Carga tu base de clientes de una vez. El sistema detectará las columnas automáticamente.</p>' +
+        '</div>' +
+        '<div class="glass-card" style="padding:14px;margin-bottom:16px;background:var(--c-bg-input);border:1px dashed var(--c-border);">' +
+          '<p style="font-size:0.8rem;color:var(--c-text-muted);margin-bottom:8px;"><b>📌 Columnas soportadas:</b></p>' +
+          '<p style="font-size:0.8rem;color:var(--c-text-secondary);line-height:1.6;margin:0;">' +
+            '• <b>Nombre</b> (obligatorio) — Cliente, Negocio<br>' +
+            '• <b>Teléfono</b> — Celular, WhatsApp<br>' +
+            '• <b>Dirección</b> — Domicilio, Ubicación<br>' +
+            '• <b>Tipo</b> — Categoría, Tipo de negocio<br>' +
+            '• <b>Día</b> — Día de visita' +
+          '</p>' +
+        '</div>' +
+        '<label style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px;border:2px dashed var(--c-accent);border-radius:12px;cursor:pointer;transition:opacity 0.2s;">' +
+          '<span style="font-size:1.5rem;">📁</span>' +
+          '<span style="font-size:0.85rem;color:var(--c-accent);font-weight:600;">Toca para seleccionar archivo</span>' +
+          '<span style="font-size:0.75rem;color:var(--c-text-muted);">.xlsx solamente</span>' +
+          '<input type="file" accept=".xlsx,.xls" style="display:none;" onchange="App._excelClientUpload(this)">' +
+        '</label>' +
+      '</div>'
+    );
     pushNav('data-result');
   },
 

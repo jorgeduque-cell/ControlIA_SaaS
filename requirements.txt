@@ -7,3 +7,4 @@ python-dotenv>=1.0.0
 ortools>=9.9
 scikit-learn>=1.4
 requests>=2.31
+openpyxl>=3.1

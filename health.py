@@ -332,6 +332,10 @@ class AppHandler(BaseHTTPRequestHandler):
             self._api_route_prospect(vendor_id, body)
         elif path == '/api/geocode':
             self._api_geocode(body)
+        elif path == '/api/routes/excel':
+            self._api_route_excel(vendor_id, body)
+        elif path == '/api/clients/import':
+            self._api_import_clients(vendor_id, body)
         else:
             self._send_error(404, "API endpoint not found")
 
@@ -1763,6 +1767,205 @@ class AppHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.error("Geocode API error: %s", e)
             self._send_error(500, f"Error geocodificando: {e}")
+
+    # ─────────────────────────────────────────────────────────────────
+    # EXCEL ROUTE OPTIMIZATION
+    # ─────────────────────────────────────────────────────────────────
+
+    def _api_route_excel(self, vendor_id, body):
+        """POST /api/routes/excel — Parse Excel, geocode addresses, optimize route."""
+        import base64
+        import io
+        import time as _time
+        from openpyxl import load_workbook
+        from routing_engine import geocode_nominatim, build_optimized_route
+
+        file_b64 = body.get('file')
+        if not file_b64:
+            self._send_error(400, "No se recibió archivo")
+            return
+
+        try:
+            # Decode base64 file
+            file_bytes = base64.b64decode(file_b64)
+            wb = load_workbook(io.BytesIO(file_bytes), read_only=True)
+            ws = wb.active
+
+            # Read header row and auto-detect address column
+            headers = [str(c.value or '').strip().lower() for c in next(ws.iter_rows(min_row=1, max_row=1))]
+            addr_col = None
+            name_col = None
+            for i, h in enumerate(headers):
+                if h in ('direccion', 'dirección', 'address', 'dir', 'domicilio', 'ubicacion', 'ubicación'):
+                    addr_col = i
+                if h in ('nombre', 'name', 'cliente', 'negocio', 'razon social', 'razón social'):
+                    name_col = i
+
+            if addr_col is None:
+                self._send_error(400,
+                    "No se encontró columna de dirección. "
+                    "El Excel debe tener una columna llamada 'Dirección', 'Address' o 'Domicilio'.")
+                return
+
+            # Extract rows
+            rows = []
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                cells = list(row)
+                addr = str(cells[addr_col] or '').strip() if addr_col < len(cells) else ''
+                name = str(cells[name_col] or '').strip() if name_col is not None and name_col < len(cells) else ''
+                if addr:
+                    rows.append({'name': name or addr[:30], 'address': addr})
+
+            wb.close()
+
+            if not rows:
+                self._send_error(400, "El archivo no tiene direcciones válidas")
+                return
+
+            logger.info("EXCEL ROUTE: %d addresses to geocode", len(rows))
+
+            # Geocode each address (with 1s rate limit for Nominatim)
+            stops = []
+            errors = []
+            for i, row in enumerate(rows[:25]):  # Max 25 addresses
+                lat, lng = geocode_nominatim(row['address'])
+                if lat is not None:
+                    stops.append({
+                        "lat": lat, "lng": lng,
+                        "name": row['name'],
+                        "address": row['address'],
+                        "emoji": "📍",
+                        "phone": "", "opening_hours": "",
+                        "distance_from_origin": 0,
+                    })
+                else:
+                    errors.append(row['address'])
+                if i < len(rows) - 1:
+                    _time.sleep(1.1)  # Nominatim rate limit
+
+            logger.info("EXCEL ROUTE: Geocoded %d/%d (errors: %d)", len(stops), len(rows), len(errors))
+
+            if not stops:
+                self._json_response({
+                    "found": 0, "stops": [], "google_maps_url": None,
+                    "errors": errors, "total_time_min": 0,
+                })
+                return
+
+            # Use first stop as origin, rest as destinations
+            origin = (stops[0]["lat"], stops[0]["lng"])
+            profile = body.get('profile', 'driving-car')
+
+            clusters = build_optimized_route(origin, stops[1:] if len(stops) > 1 else stops, profile)
+
+            if clusters:
+                cluster = clusters[0]
+                self._json_response({
+                    "found": len(stops),
+                    "in_route": cluster["total_stops"],
+                    "total_time_min": cluster["total_time_min"],
+                    "google_maps_url": cluster["google_maps_url"],
+                    "stops": cluster["stops"],
+                    "errors": errors,
+                })
+            else:
+                self._json_response({
+                    "found": len(stops),
+                    "in_route": len(stops),
+                    "stops": stops,
+                    "google_maps_url": None,
+                    "errors": errors,
+                    "total_time_min": 0,
+                })
+
+        except Exception as e:
+            logger.error("Excel route error: %s", e, exc_info=True)
+            self._send_error(500, f"Error procesando Excel: {e}")
+
+    # ─────────────────────────────────────────────────────────────────
+    # EXCEL CLIENT IMPORT
+    # ─────────────────────────────────────────────────────────────────
+
+    def _api_import_clients(self, vendor_id, body):
+        """POST /api/clients/import — Parse Excel and bulk-create clients."""
+        import base64
+        import io
+        from openpyxl import load_workbook
+
+        file_b64 = body.get('file')
+        if not file_b64:
+            self._send_error(400, "No se recibió archivo")
+            return
+
+        try:
+            file_bytes = base64.b64decode(file_b64)
+            wb = load_workbook(io.BytesIO(file_bytes), read_only=True)
+            ws = wb.active
+
+            # Read headers
+            headers = [str(c.value or '').strip().lower() for c in next(ws.iter_rows(min_row=1, max_row=1))]
+
+            # Map columns
+            col_map = {}
+            mappings = {
+                'nombre': ('nombre', 'name', 'cliente', 'negocio', 'razon social', 'razón social'),
+                'telefono': ('telefono', 'teléfono', 'phone', 'celular', 'whatsapp', 'tel'),
+                'direccion': ('direccion', 'dirección', 'address', 'dir', 'domicilio', 'ubicacion', 'ubicación'),
+                'tipo_negocio': ('tipo', 'tipo_negocio', 'categoria', 'categoría', 'type'),
+                'dia_visita': ('dia', 'día', 'dia_visita', 'día_visita', 'day'),
+            }
+            for field, aliases in mappings.items():
+                for i, h in enumerate(headers):
+                    if h in aliases:
+                        col_map[field] = i
+                        break
+
+            if 'nombre' not in col_map:
+                self._send_error(400,
+                    "No se encontró columna de nombre. "
+                    "El Excel debe tener una columna llamada 'Nombre', 'Cliente' o 'Negocio'.")
+                return
+
+            # Extract and insert
+            conn = get_connection(vendor_id)
+            inserted = 0
+            skipped = 0
+            try:
+                for row in ws.iter_rows(min_row=2, values_only=True):
+                    cells = list(row)
+                    name = str(cells[col_map['nombre']] or '').strip() if col_map['nombre'] < len(cells) else ''
+                    if not name:
+                        continue
+
+                    phone = str(cells[col_map.get('telefono', -1)] or '').strip() if col_map.get('telefono', -1) >= 0 and col_map.get('telefono', -1) < len(cells) else ''
+                    address = str(cells[col_map.get('direccion', -1)] or '').strip() if col_map.get('direccion', -1) >= 0 and col_map.get('direccion', -1) < len(cells) else ''
+                    biz_type = str(cells[col_map.get('tipo_negocio', -1)] or '').strip() if col_map.get('tipo_negocio', -1) >= 0 and col_map.get('tipo_negocio', -1) < len(cells) else ''
+                    visit_day = str(cells[col_map.get('dia_visita', -1)] or '').strip() if col_map.get('dia_visita', -1) >= 0 and col_map.get('dia_visita', -1) < len(cells) else ''
+
+                    try:
+                        conn.execute("""
+                            INSERT INTO clientes (vendedor_id, nombre, telefono, direccion, tipo_negocio, dia_visita, tipo_cliente)
+                            VALUES (%s, %s, %s, %s, %s, %s, 'Cliente')
+                        """, (vendor_id, name, phone, address, biz_type, visit_day))
+                        inserted += 1
+                    except Exception:
+                        skipped += 1
+
+                conn.commit()
+            finally:
+                conn.close()
+
+            wb.close()
+            logger.info("CLIENT IMPORT: vendor=%s inserted=%d skipped=%d", vendor_id, inserted, skipped)
+            self._json_response({
+                "inserted": inserted,
+                "skipped": skipped,
+                "total": inserted + skipped,
+            })
+
+        except Exception as e:
+            logger.error("Client import error: %s", e, exc_info=True)
+            self._send_error(500, f"Error importando: {e}")
 
     def log_message(self, format, *args):
         """Silence default HTTP logging to keep console clean."""
