@@ -222,9 +222,8 @@ def register(bot):
             return
         bot.send_message(
             message.chat.id,
-            "📱 <b>RADAR DE PROSPECCIÓN V2</b>\n\n"
-            "🔍 Escanea OpenStreetMap para negocios reales.\n"
-            "💰 <b>Costo: $0</b> (100% gratis)\n\n"
+            "📱 <b>RADAR DE PROSPECCIÓN</b>\n\n"
+            "🔍 Encuentra negocios reales cerca de ti.\n\n"
             "📍 Envía tu <b>ubicación actual</b> con el clip 📎\n"
             "   o escribe tu punto de partida:",
         )
@@ -241,7 +240,7 @@ def register(bot):
                 route_data["origin_text"] = f"{route_data['lat']:.4f}, {route_data['lng']:.4f}"
             else:
                 route_data["origin_text"] = (message.text or "").strip()
-                bot.send_message(message.chat.id, "🔍 Geocodificando con Nominatim (gratis)...")
+                bot.send_message(message.chat.id, "🔍 Buscando ubicación...")
                 lat, lng = geocode_nominatim(route_data["origin_text"])
                 if lat is None:
                     bot.send_message(message.chat.id, "❌ No encontré esa dirección. Intenta ser más específico.")
@@ -356,10 +355,8 @@ def register(bot):
 
             bot.send_message(
                 message.chat.id,
-                f"🚚 <b>RUTA DE ENTREGAS V2</b>\n\n"
-                f"📦 <b>{len(pending)}</b> clientes con pedidos pendientes.\n"
-                f"🧠 Motor: ORS + OR-Tools (optimización real)\n"
-                f"💰 Costo: <b>$0</b>\n\n"
+                f"🚚 <b>RUTA DE ENTREGAS</b>\n\n"
+                f"📦 <b>{len(pending)}</b> clientes con pedidos pendientes.\n\n"
                 "📍 Escribe el <b>punto de partida</b>\n"
                 "   o envía tu ubicación con el clip 📎:",
             )
@@ -596,8 +593,8 @@ def _execute_discovery_v2(bot, message, route_data):
     try:
         bot.send_message(
             message.chat.id,
-            "🔍 <b>Escaneando OpenStreetMap...</b>\n"
-            "🌍 Buscando negocios reales (gratis)...",
+            "🔍 <b>Escaneando zona...</b>\n"
+            "🌍 Buscando negocios cercanos...",
             reply_markup=types.ReplyKeyboardRemove(),
         )
 
@@ -657,15 +654,14 @@ def _execute_discovery_v2(bot, message, route_data):
         remaining = len(all_places) - len(ordered_route)
 
         # Build output
-        response = "📱 <b>RADAR DE PROSPECCIÓN V2</b>\n"
+        response = "📱 <b>RADAR DE PROSPECCIÓN</b>\n"
         response += "━" * 34 + "\n\n"
         response += f"📍 <b>Zona:</b> {route_data['origin_text']}\n"
-        response += f"🎯 <b>Target:</b> {route_data['target_label']}\n"
+        response += f"🎯 <b>Tipo:</b> {route_data['target_label']}\n"
         response += f"📌 <b>Radio:</b> {radius}m\n"
         response += f"🔍 <b>Encontrados:</b> {len(all_places)} negocios\n"
         response += f"📊 <b>En ruta:</b> {len(ordered_route)} paradas\n"
-        response += f"⏱️ <b>Tiempo est.:</b> ~{total_time} min\n"
-        response += f"💰 <b>Motor:</b> ORS + OR-Tools (gratis)\n\n"
+        response += f"⏱️ <b>Tiempo est.:</b> ~{total_time} min\n\n"
 
         response += "🗺️ <b>RECORRIDO OPTIMIZADO:</b>\n" + "━" * 34 + "\n\n"
         response += f"🟢 <b>INICIO:</b> {route_data['origin_text']}\n     │\n"

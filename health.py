@@ -328,6 +328,8 @@ class AppHandler(BaseHTTPRequestHandler):
             self._api_generate_cotizacion(vendor_id)
         elif path == '/api/documents/backup':
             self._api_generate_backup(vendor_id)
+        elif path == '/api/routes/prospect':
+            self._api_route_prospect(vendor_id, body)
         else:
             self._send_error(404, "API endpoint not found")
 
@@ -1612,6 +1614,119 @@ class AppHandler(BaseHTTPRequestHandler):
             if val and isinstance(val, date):
                 v[key] = val.isoformat()
         return v
+
+    # ─────────────────────────────────────────────────────────────────
+    # ROUTES / PROSPECT API
+    # ─────────────────────────────────────────────────────────────────
+
+    def _api_route_prospect(self, vendor_id, body):
+        """POST /api/routes/prospect — Run discovery + route optimization."""
+        from routing_engine import (
+            search_overpass_businesses, filter_chains, build_optimized_route,
+        )
+        from config import MAX_DISCOVERY_STOPS, CHAIN_BLACKLIST
+
+        lat = body.get('lat')
+        lng = body.get('lng')
+        radius = body.get('radius', 1000)
+        business_types = body.get('business_types')  # list or None
+        custom_type = (body.get('custom_type') or '').strip()
+        exclusions = body.get('exclusions') or []  # user-defined exclusions
+
+        if lat is None or lng is None:
+            self._send_error(400, "lat and lng are required")
+            return
+
+        try:
+            lat = float(lat)
+            lng = float(lng)
+            radius = int(radius)
+        except (ValueError, TypeError):
+            self._send_error(400, "Invalid coordinates or radius")
+            return
+
+        try:
+            # Search Overpass API
+            types_to_search = business_types if business_types else None
+            places = search_overpass_businesses(lat, lng, radius, types_to_search)
+
+            # Apply global chain blacklist
+            places = filter_chains(places)
+
+            # Apply user-defined exclusions
+            if exclusions:
+                excl_lower = [e.lower().strip() for e in exclusions if e.strip()]
+                places = [
+                    p for p in places
+                    if not any(excl in p['name'].lower() for excl in excl_lower)
+                ]
+
+            # Filter by custom type keyword if provided
+            if custom_type:
+                custom_lower = custom_type.lower()
+                # Only keep places whose name or tags contain the keyword
+                places = [
+                    p for p in places
+                    if custom_lower in p['name'].lower()
+                    or custom_lower in p.get('address', '').lower()
+                ]
+
+            total_found = len(places)
+            candidates = places[:MAX_DISCOVERY_STOPS]
+
+            if not candidates:
+                self._json_response({
+                    "found": total_found,
+                    "in_route": 0,
+                    "stops": [],
+                    "google_maps_url": None,
+                    "total_time_min": 0,
+                })
+                return
+
+            # Build stops for routing engine
+            stops = []
+            for p in candidates:
+                stops.append({
+                    "lat": p["lat"],
+                    "lng": p["lng"],
+                    "name": p["name"],
+                    "address": p.get("address", ""),
+                    "emoji": p.get("emoji", "\U0001F3EA"),
+                    "phone": p.get("phone", ""),
+                    "opening_hours": p.get("opening_hours", ""),
+                    "distance_from_origin": p.get("distance_from_origin", 0),
+                })
+
+            # Optimize with OR-Tools
+            clusters = build_optimized_route(
+                origin_coords=(lat, lng),
+                stops=stops,
+                profile="foot-walking",
+            )
+
+            if not clusters:
+                self._json_response({
+                    "found": total_found,
+                    "in_route": 0,
+                    "stops": stops,  # return unoptimized
+                    "google_maps_url": None,
+                    "total_time_min": 0,
+                })
+                return
+
+            cluster = clusters[0]
+            self._json_response({
+                "found": total_found,
+                "in_route": cluster["total_stops"],
+                "total_time_min": cluster["total_time_min"],
+                "google_maps_url": cluster["google_maps_url"],
+                "stops": cluster["stops"],
+            })
+
+        except Exception as e:
+            logger.error("Prospect API error: %s", e)
+            self._send_error(500, f"Error en búsqueda: {e}")
 
     def log_message(self, format, *args):
         """Silence default HTTP logging to keep console clean."""

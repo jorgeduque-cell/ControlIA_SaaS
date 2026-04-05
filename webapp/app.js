@@ -812,6 +812,321 @@ var App = {
 };
 
 
+// ─── ROUTE PROSPECT WIZARD ───
+// 4-step in-app flow: GPS → Type → Exclusions → Radius → Results
+
+var RW_TYPES = [
+  { key: 'tienda',     emoji: '🏪', label: 'Tiendas / Minimercados' },
+  { key: 'restaurante', emoji: '🍽️', label: 'Restaurantes' },
+  { key: 'farmacia',   emoji: '🏥', label: 'Farmacias / Droguerías' },
+  { key: 'panaderia',  emoji: '🥖', label: 'Panaderías' },
+  { key: 'ferreteria', emoji: '🔧', label: 'Ferreterías' },
+  { key: 'empresa',    emoji: '🏢', label: 'Empresas / Oficinas' }
+];
+
+var RW_RADII = [
+  { value: 500,  label: '500m — Zona inmediata' },
+  { value: 1000, label: '1 km — Ideal a pie' },
+  { value: 2000, label: '2 km — Área amplia' },
+  { value: 3000, label: '3 km — Máximo alcance' }
+];
+
+function _rwRender(title, html) {
+  var t = document.getElementById('data-result-title');
+  var c = document.getElementById('data-result-content');
+  if (t) t.textContent = title;
+  if (c) c.innerHTML = html;
+}
+
+// Step 1: Get GPS Location
+App._rwStep1 = function() {
+  _rwRender('📍 Ubicación',
+    '<div class="glass-card" style="text-align:center;padding:24px;">' +
+      '<div style="font-size:3rem;margin-bottom:12px;">📍</div>' +
+      '<h3 style="font-weight:700;margin-bottom:8px;">Obteniendo tu ubicación...</h3>' +
+      '<p style="color:var(--c-text-muted);font-size:0.85rem;">Permite el acceso a GPS para localizar negocios cerca de ti.</p>' +
+      '<div style="margin-top:16px;"><div class="btn__spinner" style="border-color:rgba(108,60,225,0.3);border-top-color:#6C3CE1;margin:0 auto;"></div></div>' +
+    '</div>'
+  );
+  pushNav('data-result');
+
+  if (!navigator.geolocation) {
+    _rwRender('📍 Ubicación',
+      '<div class="glass-card" style="text-align:center;padding:24px;">' +
+        '<div style="font-size:3rem;margin-bottom:12px;">❌</div>' +
+        '<p style="color:var(--c-text-muted);">Tu dispositivo no soporta GPS.</p>' +
+      '</div>'
+    );
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    function(pos) {
+      App._rw.lat = pos.coords.latitude;
+      App._rw.lng = pos.coords.longitude;
+      haptic('success');
+      App._rwStep2();
+    },
+    function() {
+      _rwRender('📍 Ubicación',
+        '<div class="glass-card" style="text-align:center;padding:24px;">' +
+          '<div style="font-size:3rem;margin-bottom:12px;">⚠️</div>' +
+          '<p style="color:var(--c-text-muted);margin-bottom:16px;">No se pudo obtener tu ubicación.<br>Verifica los permisos de GPS.</p>' +
+          '<button class="btn btn--primary w-full" onclick="App._rwStep1()">🔄 Reintentar</button>' +
+        '</div>'
+      );
+    },
+    { enableHighAccuracy: true, timeout: 15000 }
+  );
+};
+
+// Step 2: Business Type Selection
+App._rwStep2 = function() {
+  var html =
+    '<div class="glass-card" style="padding:16px;margin-bottom:12px;">' +
+      '<p style="font-weight:600;font-size:0.85rem;">📍 Ubicación detectada</p>' +
+      '<p style="color:var(--c-text-muted);font-size:0.8rem;">' + App._rw.lat.toFixed(4) + ', ' + App._rw.lng.toFixed(4) + '</p>' +
+    '</div>' +
+    '<div class="glass-card" style="padding:20px;margin-bottom:12px;">' +
+      '<h4 style="font-weight:700;margin-bottom:12px;">🎯 ¿Qué tipo de negocio buscas?</h4>' +
+      '<p style="color:var(--c-text-muted);font-size:0.8rem;margin-bottom:12px;">Selecciona uno o varios, o escribe tu propio tipo.</p>';
+
+  RW_TYPES.forEach(function(t) {
+    var checked = App._rw.types.indexOf(t.key) >= 0;
+    html +=
+      '<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:6px;background:var(--c-bg-input);border:1px solid ' + (checked ? 'var(--c-accent)' : 'var(--c-border)') + ';border-radius:10px;cursor:pointer;transition:border 0.2s;" ' +
+        'onclick="var cb=this.querySelector(\'input\');cb.checked=!cb.checked;this.style.borderColor=cb.checked?\'var(--c-accent)\':\'var(--c-border)\';">' +
+        '<input type="checkbox" value="' + t.key + '" class="rw-type-cb" ' + (checked ? 'checked' : '') + ' style="accent-color:var(--c-accent);width:18px;height:18px;pointer-events:none;">' +
+        '<span style="font-size:1.2rem;">' + t.emoji + '</span>' +
+        '<span style="flex:1;font-size:0.9rem;">' + t.label + '</span>' +
+      '</label>';
+  });
+
+  html +=
+      '<div style="margin-top:12px;">' +
+        '<p style="font-size:0.8rem;color:var(--c-text-muted);margin-bottom:6px;">O escribe tu propio tipo:</p>' +
+        '<input type="text" id="rw-custom-type" placeholder="Ej: distribuidora, papelería, licorería..." ' +
+          'value="' + (App._rw.customType || '') + '" ' +
+          'style="width:100%;padding:12px 14px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:10px;color:var(--c-text);font-size:0.9rem;outline:none;box-sizing:border-box;">' +
+      '</div>' +
+    '</div>' +
+    '<button class="btn btn--primary w-full" onclick="App._rwStep2Next()">Siguiente →</button>';
+
+  _rwRender('🎯 Tipo de Negocio', html);
+};
+
+App._rwStep2Next = function() {
+  var checks = document.querySelectorAll('.rw-type-cb:checked');
+  App._rw.types = [];
+  checks.forEach(function(cb) { App._rw.types.push(cb.value); });
+  var custom = document.getElementById('rw-custom-type');
+  App._rw.customType = custom ? custom.value.trim() : '';
+  if (App._rw.types.length === 0 && !App._rw.customType) {
+    showToast('Selecciona al menos un tipo o escribe uno', 'error');
+    haptic('error');
+    return;
+  }
+  haptic('light');
+  App._rwStep3();
+};
+
+// Step 3: Exclusion Filter
+App._rwStep3 = function() {
+  var html =
+    '<div class="glass-card" style="padding:20px;margin-bottom:12px;">' +
+      '<h4 style="font-weight:700;margin-bottom:8px;">🚫 Exclusiones (opcional)</h4>' +
+      '<p style="color:var(--c-text-muted);font-size:0.8rem;margin-bottom:12px;">' +
+        'Agrega nombres de negocios que quieras <b>excluir</b> de los resultados. ' +
+        'Por ejemplo: cadenas grandes o marcas que no te interesan.' +
+      '</p>' +
+      '<div style="display:flex;gap:8px;margin-bottom:12px;">' +
+        '<input type="text" id="rw-excl-input" placeholder="Ej: McDonald\'s, KFC, Oxxo..." ' +
+          'style="flex:1;padding:12px 14px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:10px;color:var(--c-text);font-size:0.9rem;outline:none;">' +
+        '<button class="btn btn--accent" style="padding:10px 16px;white-space:nowrap;" onclick="App._rwAddExcl()">+ Agregar</button>' +
+      '</div>' +
+      '<div id="rw-excl-chips" style="display:flex;flex-wrap:wrap;gap:6px;"></div>' +
+    '</div>' +
+    '<button class="btn btn--primary w-full" onclick="App._rwStep4()">Siguiente →</button>' +
+    '<button class="btn btn--ghost w-full" style="margin-top:6px;" onclick="App._rw.exclusions=[];App._rwStep4()">Omitir</button>';
+
+  _rwRender('🚫 Exclusiones', html);
+  App._rwRenderChips();
+
+  setTimeout(function() {
+    var inp = document.getElementById('rw-excl-input');
+    if (inp) inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); App._rwAddExcl(); }
+    });
+  }, 100);
+};
+
+App._rwAddExcl = function() {
+  var inp = document.getElementById('rw-excl-input');
+  var val = inp ? inp.value.trim() : '';
+  if (!val) return;
+  val.split(',').forEach(function(v) {
+    v = v.trim();
+    if (v && App._rw.exclusions.indexOf(v) === -1) App._rw.exclusions.push(v);
+  });
+  if (inp) inp.value = '';
+  App._rwRenderChips();
+  haptic('light');
+};
+
+App._rwRemoveExcl = function(idx) {
+  App._rw.exclusions.splice(idx, 1);
+  App._rwRenderChips();
+};
+
+App._rwRenderChips = function() {
+  var c = document.getElementById('rw-excl-chips');
+  if (!c) return;
+  c.innerHTML = '';
+  App._rw.exclusions.forEach(function(excl, idx) {
+    c.innerHTML +=
+      '<span style="display:inline-flex;align-items:center;gap:4px;padding:6px 12px;background:rgba(255,107,157,0.15);border:1px solid rgba(255,107,157,0.3);border-radius:20px;font-size:0.8rem;color:#FF6B9D;">' +
+        '🚫 ' + excl +
+        '<span onclick="App._rwRemoveExcl(' + idx + ')" style="cursor:pointer;margin-left:4px;font-weight:700;">✕</span>' +
+      '</span>';
+  });
+};
+
+// Step 4: Radius Selection
+App._rwStep4 = function() {
+  var typeSummary = '';
+  if (App._rw.types.length > 0) {
+    typeSummary = App._rw.types.map(function(k) {
+      var found = RW_TYPES.find(function(t) { return t.key === k; });
+      return found ? found.emoji + ' ' + found.label : k;
+    }).join(', ');
+  }
+  if (App._rw.customType) {
+    typeSummary += (typeSummary ? ' + ' : '') + '🔍 "' + App._rw.customType + '"';
+  }
+
+  var html =
+    '<div class="glass-card" style="padding:16px;margin-bottom:12px;">' +
+      '<p style="font-size:0.8rem;color:var(--c-text-muted);"><b>Tipo:</b> ' + typeSummary + '</p>' +
+      (App._rw.exclusions.length > 0 ? '<p style="font-size:0.8rem;color:#FF6B9D;margin-top:4px;"><b>Excluir:</b> ' + App._rw.exclusions.join(', ') + '</p>' : '') +
+    '</div>' +
+    '<div class="glass-card" style="padding:20px;margin-bottom:12px;">' +
+      '<h4 style="font-weight:700;margin-bottom:12px;">📍 Radio de búsqueda</h4>';
+
+  RW_RADII.forEach(function(r, i) {
+    html +=
+      '<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:6px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:10px;cursor:pointer;">' +
+        '<input type="radio" name="rw-radius" value="' + r.value + '" ' + (i === 1 ? 'checked' : '') + ' style="accent-color:var(--c-accent);width:18px;height:18px;">' +
+        '<span style="flex:1;font-size:0.9rem;">' + r.label + '</span>' +
+      '</label>';
+  });
+
+  html +=
+    '</div>' +
+    '<button class="btn btn--primary w-full" onclick="App._rwExecute()" id="rw-search-btn">' +
+      '<span id="rw-search-text">🔍 Buscar Negocios</span>' +
+      '<div id="rw-search-spinner" class="btn__spinner hidden"></div>' +
+    '</button>';
+
+  _rwRender('📍 Radio', html);
+};
+
+// Execute: Call API
+App._rwExecute = function() {
+  var radios = document.querySelectorAll('input[name="rw-radius"]');
+  var radius = 1000;
+  radios.forEach(function(r) { if (r.checked) radius = parseInt(r.value); });
+
+  var btn = document.getElementById('rw-search-btn');
+  var btnText = document.getElementById('rw-search-text');
+  var spinner = document.getElementById('rw-search-spinner');
+  if (btn) btn.disabled = true;
+  if (btnText) btnText.classList.add('hidden');
+  if (spinner) spinner.classList.remove('hidden');
+
+  API.post('/api/routes/prospect', {
+    lat: App._rw.lat,
+    lng: App._rw.lng,
+    radius: radius,
+    business_types: App._rw.types.length > 0 ? App._rw.types : null,
+    custom_type: App._rw.customType || null,
+    exclusions: App._rw.exclusions
+  })
+  .then(function(data) {
+    haptic('success');
+    App._rwResults(data, radius);
+  })
+  .catch(function(err) {
+    haptic('error');
+    showToast('Error: ' + (err.message || 'Intenta de nuevo'), 'error');
+    if (btn) btn.disabled = false;
+    if (btnText) btnText.classList.remove('hidden');
+    if (spinner) spinner.classList.add('hidden');
+  });
+};
+
+// Show Results
+App._rwResults = function(data, radius) {
+  if (!data.stops || data.stops.length === 0) {
+    _rwRender('🗺️ Resultados',
+      '<div class="glass-card" style="text-align:center;padding:24px;">' +
+        '<div style="font-size:3rem;margin-bottom:12px;">📭</div>' +
+        '<h3 style="font-weight:700;margin-bottom:8px;">Sin resultados</h3>' +
+        '<p style="color:var(--c-text-muted);font-size:0.85rem;">No se encontraron negocios con esos criterios en ' + radius + 'm.</p>' +
+        '<button class="btn btn--primary w-full" style="margin-top:16px;" onclick="App._rwStep4()">← Cambiar radio</button>' +
+        '<button class="btn btn--ghost w-full" style="margin-top:6px;" onclick="App._rwStep2()">← Cambiar tipo</button>' +
+      '</div>'
+    );
+    return;
+  }
+
+  var html =
+    '<div class="glass-card" style="padding:16px;margin-bottom:12px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+        '<div>' +
+          '<span style="font-size:1.5rem;font-weight:700;color:var(--c-accent);">' + (data.in_route || data.stops.length) + '</span>' +
+          '<span style="color:var(--c-text-muted);font-size:0.85rem;"> negocios en ruta</span>' +
+        '</div>' +
+        '<div style="text-align:right;">' +
+          '<span style="font-size:0.85rem;color:var(--c-text-muted);">⏱️ ~' + (data.total_time_min || 0) + ' min</span>' +
+        '</div>' +
+      '</div>' +
+      (data.found > data.stops.length ? '<p style="font-size:0.75rem;color:var(--c-text-muted);margin-top:6px;">' + data.found + ' encontrados en total</p>' : '') +
+    '</div>';
+
+  if (data.google_maps_url) {
+    html +=
+      '<a href="' + data.google_maps_url + '" target="_blank" class="btn btn--accent w-full" ' +
+        'style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:12px;text-decoration:none;">' +
+        '🗺️ Abrir Ruta en Google Maps' +
+      '</a>';
+  }
+
+  html += '<div class="glass-card" style="padding:16px;">';
+  data.stops.forEach(function(stop, i) {
+    var dist = stop.distance_from_origin || 0;
+    var distLabel = dist < 1000 ? Math.round(dist) + 'm' : (dist / 1000).toFixed(1) + 'km';
+    html +=
+      '<div style="display:flex;gap:12px;padding:10px 0;' + (i < data.stops.length - 1 ? 'border-bottom:1px solid var(--c-border);' : '') + '">' +
+        '<div style="width:28px;height:28px;border-radius:50%;background:var(--c-accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:700;flex-shrink:0;">' + (i + 1) + '</div>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-weight:600;font-size:0.9rem;">' + (stop.emoji || '🏪') + ' ' + stop.name + '</div>' +
+          (stop.address ? '<div style="font-size:0.75rem;color:var(--c-text-muted);margin-top:2px;">' + stop.address + '</div>' : '') +
+          '<div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap;">' +
+            '<span style="font-size:0.7rem;color:var(--c-accent);">📍 ' + distLabel + '</span>' +
+            (stop.phone ? '<span style="font-size:0.7rem;color:var(--c-text-muted);">📱 ' + stop.phone + '</span>' : '') +
+            (stop.opening_hours ? '<span style="font-size:0.7rem;color:var(--c-text-muted);">🕐 ' + stop.opening_hours + '</span>' : '') +
+          '</div>' +
+        '</div>' +
+      '</div>';
+  });
+  html += '</div>';
+
+  html += '<button class="btn btn--secondary w-full" style="margin-top:12px;" onclick="App._rwStep2()">🔄 Nueva búsqueda</button>';
+
+  _rwRender('🗺️ ' + data.stops.length + ' Negocios Encontrados', html);
+};
+
+
 // ─── COMMAND HANDLERS ───
 var CMD_HANDLERS = {
   nuevo_cliente: function() {
@@ -1689,52 +2004,21 @@ var CMD_HANDLERS = {
   },
 
   ruta_pie: function() {
-    // V2: Info screen — actual logic runs in Telegram bot
-    var titleEl = document.getElementById('data-result-title');
-    var content = document.getElementById('data-result-content');
-    if (titleEl) titleEl.textContent = '🗺️ Radar de Prospección V2';
-    if (content) {
-      content.innerHTML =
-        '<div class="glass-card" style="text-align:center;padding:24px;margin-bottom:16px;">' +
-          '<div style="font-size:3rem;margin-bottom:12px;">🗺️</div>' +
-          '<h3 style="font-weight:700;margin-bottom:8px;">Radar de Prospección V2</h3>' +
-          '<p style="color:var(--c-text-muted);font-size:0.85rem;margin-bottom:16px;">' +
-            'Este comando usa el motor inteligente con:<br>' +
-            '🌍 <b>Overpass API</b> — Busca negocios reales<br>' +
-            '📐 <b>OpenRouteService</b> — Tiempos reales caminando<br>' +
-            '🧠 <b>OR-Tools</b> — Optimiza el orden de visita<br>' +
-            '💰 <b>Costo: $0</b>' +
-          '</p>' +
-          '<p style="color:var(--c-accent);font-weight:600;font-size:0.95rem;">Escribe <code>/ruta_pie</code> en el chat del bot</p>' +
-        '</div>' +
-        '<div class="glass-card" style="padding:16px;">' +
-          '<p style="font-size:0.85rem;color:var(--c-text-muted);margin-bottom:8px;">📋 <b>Flujo:</b></p>' +
-          '<ol style="color:var(--c-text-secondary);font-size:0.85rem;padding-left:20px;margin:0;line-height:1.8;">' +
-            '<li>Envía tu ubicación con 📎 o escribe dirección</li>' +
-            '<li>Selecciona tipo de negocio (tiendas, farmacias...)</li>' +
-            '<li>Elige radio de búsqueda</li>' +
-            '<li>Recibe ruta optimizada + botón Google Maps</li>' +
-          '</ol>' +
-        '</div>';
-    }
-    pushNav('data-result');
+    App._rw = { types: [], exclusions: [], customType: '' };
+    App._rwStep1();
   },
 
   ruta_camion: function() {
     var titleEl = document.getElementById('data-result-title');
     var content = document.getElementById('data-result-content');
-    if (titleEl) titleEl.textContent = '🚚 Ruta de Entregas V2';
+    if (titleEl) titleEl.textContent = '🚚 Ruta de Entregas';
     if (content) {
       content.innerHTML =
         '<div class="glass-card" style="text-align:center;padding:24px;margin-bottom:16px;">' +
           '<div style="font-size:3rem;margin-bottom:12px;">🚚</div>' +
-          '<h3 style="font-weight:700;margin-bottom:8px;">Ruta de Entregas V2</h3>' +
+          '<h3 style="font-weight:700;margin-bottom:8px;">Ruta de Entregas</h3>' +
           '<p style="color:var(--c-text-muted);font-size:0.85rem;margin-bottom:16px;">' +
-            'Optimiza entregas vehiculares con:<br>' +
-            '📐 <b>ORS</b> — Tiempos reales, sentido de calles<br>' +
-            '🧠 <b>OR-Tools</b> — Orden óptimo (TSP)<br>' +
-            '📊 <b>K-Means</b> — Divide zonas si +10 clientes<br>' +
-            '💰 <b>Costo: $0</b>' +
+            'Calcula el orden óptimo para entregar todos tus pedidos pendientes en vehículo.' +
           '</p>' +
           '<p style="color:var(--c-accent);font-weight:600;font-size:0.95rem;">Escribe <code>/ruta_camion</code> en el chat del bot</p>' +
         '</div>';
@@ -1745,17 +2029,14 @@ var CMD_HANDLERS = {
   ruta_semanal: function() {
     var titleEl = document.getElementById('data-result-title');
     var content = document.getElementById('data-result-content');
-    if (titleEl) titleEl.textContent = '📅 Ruta Semanal V2';
+    if (titleEl) titleEl.textContent = '📅 Ruta Semanal';
     if (content) {
       content.innerHTML =
         '<div class="glass-card" style="text-align:center;padding:24px;margin-bottom:16px;">' +
           '<div style="font-size:3rem;margin-bottom:12px;">📅</div>' +
-          '<h3 style="font-weight:700;margin-bottom:8px;">Ruta Semanal V2</h3>' +
+          '<h3 style="font-weight:700;margin-bottom:8px;">Ruta Semanal</h3>' +
           '<p style="color:var(--c-text-muted);font-size:0.85rem;margin-bottom:16px;">' +
-            'Ruta peatonal optimizada por día:<br>' +
-            '📐 <b>ORS</b> — Tiempos reales caminando<br>' +
-            '🧠 <b>OR-Tools</b> — Orden óptimo de visita<br>' +
-            '💰 <b>Costo: $0</b>' +
+            'Genera la ruta peatonal optimizada para visitar tus clientes según el día asignado.' +
           '</p>' +
           '<p style="color:var(--c-accent);font-weight:600;font-size:0.95rem;">Escribe <code>/ruta_semanal</code> en el chat del bot</p>' +
         '</div>';
