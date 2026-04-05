@@ -320,6 +320,20 @@ var App = {
     setTimeout(function() { var el = document.getElementById('input-phone'); if (el) el.focus(); }, 400);
   },
 
+  handleOnboardingLogo: function(input) {
+    if (!input.files || !input.files[0]) return;
+    var file = input.files[0];
+    if (file.size > 200 * 1024) { showToast('Logo máximo 200KB', 'error'); return; }
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      App.registrationData.logo_base64 = e.target.result;
+      var preview = document.getElementById('onboarding-logo-preview');
+      if (preview) preview.innerHTML = '<img src="' + e.target.result + '" style="width:100%;height:100%;object-fit:cover;">';
+      showToast('✅ Logo cargado', 'success');
+    };
+    reader.readAsDataURL(file);
+  },
+
   submitRegistration: function() {
     var input = document.getElementById('input-phone');
     var phone = input ? input.value.trim() : '';
@@ -344,6 +358,10 @@ var App = {
         if (sp) sp.textContent = App.vendor.telefono_soporte || '';
         var ste = document.getElementById('success-trial-end');
         if (ste) ste.textContent = formatDate(App.vendor.fecha_vencimiento);
+        // Upload logo if provided during onboarding
+        if (App.registrationData.logo_base64) {
+          API.post('/api/vendor/logo', { logo_base64: App.registrationData.logo_base64 }).catch(function() {});
+        }
         haptic('success');
         spawnConfetti();
         App.showScreen('success');
@@ -676,6 +694,14 @@ var App = {
         });
         if (field.defaultValue !== undefined) select.value = field.defaultValue;
         group.appendChild(select);
+      } else if (field.type === 'textarea') {
+        var ta = document.createElement('textarea');
+        ta.id = 'form-field-' + field.key;
+        ta.placeholder = (field.icon || '') + ' ' + field.label;
+        ta.rows = 3;
+        ta.style.cssText = 'width:100%;padding:14px 16px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:12px;color:var(--c-text);font-size:0.95rem;font-family:inherit;outline:none;resize:vertical;';
+        if (field.defaultValue) ta.value = field.defaultValue;
+        group.appendChild(ta);
       } else {
         var inputType = field.type || 'text';
         var placeholderText = (field.icon || '') + ' ' + field.label;
@@ -796,7 +822,9 @@ var CMD_HANDLERS = {
         { key: 'nombre', label: 'Nombre completo', type: 'text', required: true, icon: '👤' },
         { key: 'telefono', label: 'Teléfono / WhatsApp', type: 'tel', icon: '📱' },
         { key: 'direccion', label: 'Dirección', type: 'text', icon: '📍' },
-        { key: 'tipo_cliente', label: 'Tipo', type: 'select', options: ['Cliente', 'Prospecto'], icon: '🏷️' }
+        { key: 'tipo_negocio', label: 'Categoría', type: 'select', options: ['Distribuidor', 'Consumidor Final', 'Mayorista', 'Minorista', 'Otro'], icon: '🏢' },
+        { key: 'tipo_cliente', label: 'Estado', type: 'select', options: ['Cliente', 'Prospecto'], icon: '🏷️' },
+        { key: 'nota_inicial', label: 'Nota inicial (opcional)', type: 'textarea', icon: '📝' }
       ],
       submitLabel: 'Registrar Cliente',
       apiEndpoint: '/api/clients',
@@ -1331,11 +1359,26 @@ var CMD_HANDLERS = {
               { icon: '📦', label: 'Total pedidos', value: (data.orders_count || 0).toString() },
               { icon: '💰', label: 'Total compras', value: formatCOP(data.total_purchases || 0) }
             ];
-            return rows.map(function(r) {
+            var html = rows.map(function(r) {
               return '<div class="glass-card" style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;margin-bottom:8px;">' +
                 '<span>' + r.icon + ' ' + r.label + '</span>' +
                 '<span style="font-weight:600;color:var(--c-secondary);">' + r.value + '</span></div>';
             }).join('');
+
+            // Show notes section
+            var notes = data.notes || [];
+            if (notes.length > 0) {
+              html += '<div style="margin-top:16px;"><h3 style="color:var(--c-text-secondary);font-size:0.85rem;margin-bottom:8px;">📝 NOTAS RECIENTES</h3>';
+              notes.forEach(function(n) {
+                html += '<div class="glass-card" style="padding:12px 16px;margin-bottom:6px;">' +
+                  '<div style="color:var(--c-text);font-size:0.9rem;">' + (n.texto || '') + '</div>' +
+                  '<div style="color:var(--c-text-muted);font-size:0.75rem;margin-top:4px;">' + formatDate(n.fecha) + '</div>' +
+                  '</div>';
+              });
+              html += '</div>';
+            }
+
+            return html;
           }
         });
       }

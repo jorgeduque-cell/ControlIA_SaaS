@@ -16,7 +16,7 @@
   <meta http-equiv="Expires" content="0">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="./style.css?v=10">
+  <link rel="stylesheet" href="./style.css?v=11">
 </head>
 <body>
 
@@ -127,6 +127,18 @@
             <input type="tel" id="input-phone" class="input-group__input" placeholder=" " autocomplete="tel" maxlength="15">
             <label class="input-group__label" for="input-phone">Número de WhatsApp</label>
             <div class="input-group__error" id="error-phone">Ingresa un número válido</div>
+          </div>
+
+          <!-- Logo upload (optional) -->
+          <div style="margin-top:16px;text-align:center;">
+            <p style="color:var(--c-text-muted);font-size:0.8rem;margin-bottom:8px;">📷 Logo del negocio (opcional)</p>
+            <div id="onboarding-logo-preview" style="width:64px;height:64px;border-radius:12px;background:var(--c-bg-input);border:1px solid var(--c-border);margin:0 auto 8px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+              <span style="font-size:1.5rem;color:var(--c-text-muted);">🏢</span>
+            </div>
+            <label style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:var(--c-bg-card);border:1px solid var(--c-border);border-radius:8px;cursor:pointer;font-size:0.85rem;color:var(--c-text-secondary);">
+              📤 Subir Logo
+              <input type="file" id="onboarding-logo-input" accept="image/*" style="display:none;" onchange="App.handleOnboardingLogo(this)">
+            </label>
           </div>
 
           <button class="btn btn--primary w-full" id="btn-register" onclick="App.submitRegistration()">
@@ -422,6 +434,6 @@
   <div class="confetti-container" id="confetti" aria-hidden="true"></div>
 
   <!-- App Logic -->
-  <script src="./app.js?v=10"></script>
+  <script src="./app.js?v=11"></script>
 </body>
 </html>

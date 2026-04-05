@@ -516,13 +516,17 @@ class AppHandler(BaseHTTPRequestHandler):
             self._send_error(404, str(e))
 
     def _api_add_client(self, vendor_id, body):
-        from database import add_client
+        from database import add_client, add_note
         nombre = (body.get('nombre') or '').strip()
         if not nombre:
             self._send_error(400, "nombre is required")
             return
         try:
             client_id = add_client(vendor_id, body)
+            # Save initial note if provided
+            nota_inicial = (body.get('nota_inicial') or '').strip()
+            if nota_inicial:
+                add_note(vendor_id, client_id, nota_inicial)
             self._json_response({"client_id": client_id})
         except Exception as e:
             logger.error("Add client failed: %s", e)
