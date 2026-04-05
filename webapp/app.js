@@ -1969,12 +1969,19 @@ var CMD_HANDLERS = {
       title: '💼 Estado de Caja',
       apiEndpoint: '/api/finance/summary',
       render: function(data) {
+        var totalSales = data.total_sales || 0;
+        var totalCollected = data.total_collected || 0;
+        var cogs = data.cogs || 0;
+        var expenses = data.total_expenses || 0;
+        var receivable = data.total_receivable || 0;
+        var netProfit = totalCollected - cogs - expenses;
         var rows = [
-          { icon: '💰', label: 'Total ventas', value: formatCOP(data.total_sales || 0), color: '#00E676' },
-          { icon: '💵', label: 'Cobrado', value: formatCOP(data.total_collected || 0), color: '#00D4FF' },
-          { icon: '📝', label: 'Gastos', value: formatCOP(data.total_expenses || 0), color: '#FF6B9D' },
-          { icon: '💼', label: 'Utilidad neta', value: formatCOP((data.total_collected || 0) - (data.total_expenses || 0)), color: '#FFB74D' },
-          { icon: '💳', label: 'Por cobrar', value: formatCOP(data.total_receivable || 0), color: '#BB86FC' }
+          { icon: '💰', label: 'Total ventas', value: formatCOP(totalSales), color: '#00E676' },
+          { icon: '💵', label: 'Cobrado', value: formatCOP(totalCollected), color: '#00D4FF' },
+          { icon: '🛒', label: 'Costo Mercancía', value: formatCOP(cogs), color: '#FF9800' },
+          { icon: '📝', label: 'Gastos Operativos', value: formatCOP(expenses), color: '#FF6B9D' },
+          { icon: '💼', label: 'Utilidad neta', value: formatCOP(netProfit), color: netProfit >= 0 ? '#00E676' : '#FF6B9D' },
+          { icon: '💳', label: 'Por cobrar', value: formatCOP(receivable), color: '#BB86FC' }
         ];
         return rows.map(function(r) {
           return '<div class="glass-card" style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;margin-bottom:8px;">' +
