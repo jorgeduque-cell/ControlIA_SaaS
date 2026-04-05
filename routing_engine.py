@@ -248,12 +248,26 @@ def cluster_stops_kmeans(coords, max_per_cluster=None):
 
 # OSM tag mappings for business types
 OSM_BUSINESS_TAGS = {
-    "tienda": ['shop=convenience', 'shop=supermarket', 'shop=general'],
-    "restaurante": ['amenity=restaurant', 'amenity=fast_food', 'amenity=cafe'],
-    "farmacia": ['amenity=pharmacy', 'shop=chemist'],
-    "panaderia": ['shop=bakery', 'shop=pastry'],
-    "ferreteria": ['shop=hardware', 'shop=doityourself'],
-    "empresa": ['office=company', 'office=yes'],
+    "tienda": [
+        'shop=convenience', 'shop=supermarket', 'shop=general',
+        'shop=kiosk', 'shop=variety_store', 'shop=wholesale',
+        'shop=department_store', 'shop=greengrocer', 'shop=butcher',
+        'shop=beverages', 'shop=alcohol',
+    ],
+    "restaurante": [
+        'amenity=restaurant', 'amenity=fast_food', 'amenity=cafe',
+        'amenity=food_court', 'amenity=bar', 'amenity=pub',
+    ],
+    "farmacia": ['amenity=pharmacy', 'shop=chemist', 'shop=medical_supply'],
+    "panaderia": ['shop=bakery', 'shop=pastry', 'shop=confectionery'],
+    "ferreteria": [
+        'shop=hardware', 'shop=doityourself', 'shop=paint',
+        'shop=trade', 'shop=electrical',
+    ],
+    "empresa": [
+        'office=company', 'office=yes', 'office=insurance',
+        'office=financial', 'office=lawyer', 'office=accountant',
+    ],
 }
 
 
@@ -272,28 +286,31 @@ def search_overpass_businesses(lat, lng, radius=1000, business_types=None):
     if business_types is None:
         business_types = list(OSM_BUSINESS_TAGS.keys())
 
-    # Build Overpass QL query
+    # Build Overpass QL query — search node + way + relation
     tag_filters = []
     for btype in business_types:
         tags = OSM_BUSINESS_TAGS.get(btype, [])
         for tag in tags:
             key, value = tag.split("=")
-            tag_filters.append(f'node["{key}"="{value}"](around:{radius},{lat},{lng});')
+            tag_filters.append(
+                f'nwr["{key}"="{value}"](around:{radius},{lat},{lng});'
+            )
 
     query = f"""
-    [out:json][timeout:25];
+    [out:json][timeout:30];
     (
         {"".join(tag_filters)}
     );
-    out body;
+    out body center;
     """
 
     try:
+        logger.info("Overpass query for (%.4f, %.4f) r=%dm types=%s", lat, lng, radius, business_types)
         resp = requests.post(
             OVERPASS_URL,
             data={"data": query},
             headers={"User-Agent": "ControlIA-SaaS/2.0"},
-            timeout=30,
+            timeout=35,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -304,17 +321,34 @@ def search_overpass_businesses(lat, lng, radius=1000, business_types=None):
         for element in data.get("elements", []):
             tags = element.get("tags", {})
             name = tags.get("name", "").strip()
+
+            # For unnamed businesses, use the shop/amenity/office type as name
+            if not name:
+                for fallback_key in ("shop", "amenity", "office"):
+                    val = tags.get(fallback_key, "")
+                    if val and val != "yes":
+                        name = val.replace("_", " ").capitalize()
+                        break
             if not name:
                 continue
 
-            # Deduplicate by name
+            # Deduplicate by name (case-insensitive)
             name_lower = name.lower()
             if name_lower in seen_names:
                 continue
             seen_names.add(name_lower)
 
-            place_lat = element.get("lat", 0)
-            place_lng = element.get("lon", 0)
+            # Get coordinates — ways/relations use 'center' sub-object
+            if element.get("type") == "node":
+                place_lat = element.get("lat", 0)
+                place_lng = element.get("lon", 0)
+            else:
+                center = element.get("center", {})
+                place_lat = center.get("lat", 0)
+                place_lng = center.get("lon", 0)
+
+            if place_lat == 0 and place_lng == 0:
+                continue
 
             # Determine business type emoji
             emoji = "🏪"
@@ -346,6 +380,7 @@ def search_overpass_businesses(lat, lng, radius=1000, business_types=None):
 
         # Sort by distance
         places.sort(key=lambda p: p["distance_from_origin"])
+        logger.info("Overpass found %d businesses within %dm of (%.4f, %.4f)", len(places), radius, lat, lng)
         return places
 
     except Exception as e:

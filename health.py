@@ -1648,10 +1648,14 @@ class AppHandler(BaseHTTPRequestHandler):
         try:
             # Search Overpass API
             types_to_search = business_types if business_types else None
+            logger.info("PROSPECT: lat=%.4f lng=%.4f r=%d types=%s custom='%s' excl=%s",
+                        lat, lng, radius, types_to_search, custom_type, exclusions)
             places = search_overpass_businesses(lat, lng, radius, types_to_search)
+            logger.info("PROSPECT: Overpass returned %d raw places", len(places))
 
             # Apply global chain blacklist
             places = filter_chains(places)
+            logger.info("PROSPECT: After chain filter: %d places", len(places))
 
             # Apply user-defined exclusions
             if exclusions:
@@ -1660,21 +1664,29 @@ class AppHandler(BaseHTTPRequestHandler):
                     p for p in places
                     if not any(excl in p['name'].lower() for excl in excl_lower)
                 ]
+                logger.info("PROSPECT: After user exclusions: %d places", len(places))
 
-            # Filter by custom type keyword if provided
-            if custom_type:
+            # Filter by custom type keyword ONLY when no predefined types selected
+            # (when predefined types are selected, Overpass already filtered by OSM tags)
+            if custom_type and not business_types:
                 custom_lower = custom_type.lower()
-                # Only keep places whose name or tags contain the keyword
-                places = [
+                filtered = [
                     p for p in places
                     if custom_lower in p['name'].lower()
                     or custom_lower in p.get('address', '').lower()
                 ]
+                # If name filter removes everything, keep original results
+                if filtered:
+                    places = filtered
+                    logger.info("PROSPECT: After custom_type filter '%s': %d places", custom_type, len(places))
+                else:
+                    logger.info("PROSPECT: custom_type '%s' matched 0 — keeping all %d places", custom_type, len(places))
 
             total_found = len(places)
             candidates = places[:MAX_DISCOVERY_STOPS]
 
             if not candidates:
+                logger.info("PROSPECT: No candidates found — returning empty")
                 self._json_response({
                     "found": total_found,
                     "in_route": 0,
@@ -1699,6 +1711,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 })
 
             # Optimize with OR-Tools
+            logger.info("PROSPECT: Optimizing %d stops with OR-Tools...", len(stops))
             clusters = build_optimized_route(
                 origin_coords=(lat, lng),
                 stops=stops,
@@ -1706,16 +1719,18 @@ class AppHandler(BaseHTTPRequestHandler):
             )
 
             if not clusters:
+                logger.warning("PROSPECT: OR-Tools returned no clusters — returning unoptimized")
                 self._json_response({
                     "found": total_found,
-                    "in_route": 0,
-                    "stops": stops,  # return unoptimized
+                    "in_route": len(stops),
+                    "stops": stops,
                     "google_maps_url": None,
                     "total_time_min": 0,
                 })
                 return
 
             cluster = clusters[0]
+            logger.info("PROSPECT: Success — %d stops in optimized route", cluster["total_stops"])
             self._json_response({
                 "found": total_found,
                 "in_route": cluster["total_stops"],
@@ -1725,7 +1740,7 @@ class AppHandler(BaseHTTPRequestHandler):
             })
 
         except Exception as e:
-            logger.error("Prospect API error: %s", e)
+            logger.error("Prospect API error: %s", e, exc_info=True)
             self._send_error(500, f"Error en búsqueda: {e}")
 
     def log_message(self, format, *args):
