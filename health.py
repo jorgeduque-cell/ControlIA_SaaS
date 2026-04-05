@@ -70,6 +70,7 @@ def validate_init_data(init_data_raw, bot_token):
         params = dict(urllib.parse.parse_qsl(init_data_raw, keep_blank_values=True))
         received_hash = params.pop('hash', None)
         if not received_hash:
+            logger.warning("HMAC: No hash in initData. Keys: %s", list(params.keys()))
             return None
 
         # Build data-check-string (sorted alphabetically)
@@ -84,12 +85,14 @@ def validate_init_data(init_data_raw, bot_token):
         calc_hash = hmac.new(secret, data_check_string.encode(), hashlib.sha256).hexdigest()
 
         if not hmac.compare_digest(calc_hash, received_hash):
+            logger.warning("HMAC MISMATCH: received=%s... calc=%s...", received_hash[:16], calc_hash[:16])
             return None
 
         # Extract user data
         user_raw = params.get('user')
         if user_raw:
             return json.loads(user_raw)
+        logger.warning("HMAC OK but no 'user' field in params. Keys: %s", list(params.keys()))
         return None
     except Exception as e:
         logger.error("initData validation error: %s", e)
@@ -343,14 +346,18 @@ class AppHandler(BaseHTTPRequestHandler):
         # Production: validate Telegram HMAC
         init_data = self.headers.get('X-Telegram-Init-Data', '')
         if not init_data:
+            logger.warning("AUTH FAIL: No X-Telegram-Init-Data header")
             self._send_error(401, "Missing authentication")
             return None
 
+        logger.info("AUTH: initData length=%d", len(init_data))
         user = validate_init_data(init_data, TOKEN)
         if not user or 'id' not in user:
+            logger.warning("AUTH FAIL: HMAC validation failed or no user.id. user=%s", user)
             self._send_error(401, "Invalid authentication")
             return None
 
+        logger.info("AUTH OK: vendor_id=%s", user['id'])
         return int(user['id'])
 
     # ─────────────────────────────────────────────────────────────────
