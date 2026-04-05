@@ -1689,13 +1689,10 @@ var CMD_HANDLERS = {
   },
 
   ruta_pie: function() {
-    // V2: Delegate to Telegram bot (uses Overpass + ORS + OR-Tools)
-    App.showResult({
-      title: '🗺️ Radar de Prospección V2',
-      apiEndpoint: null,
-      render: function() { return ''; }
-    });
+    // V2: Info screen — actual logic runs in Telegram bot
+    var titleEl = document.getElementById('data-result-title');
     var content = document.getElementById('data-result-content');
+    if (titleEl) titleEl.textContent = '🗺️ Radar de Prospección V2';
     if (content) {
       content.innerHTML =
         '<div class="glass-card" style="text-align:center;padding:24px;margin-bottom:16px;">' +
@@ -1703,72 +1700,67 @@ var CMD_HANDLERS = {
           '<h3 style="font-weight:700;margin-bottom:8px;">Radar de Prospección V2</h3>' +
           '<p style="color:var(--c-text-muted);font-size:0.85rem;margin-bottom:16px;">' +
             'Este comando usa el motor inteligente con:<br>' +
-            '🌍 <b>Overpass API</b> — Busca negocios reales en OpenStreetMap<br>' +
-            '📐 <b>OpenRouteService</b> — Calcula tiempos reales caminando<br>' +
+            '🌍 <b>Overpass API</b> — Busca negocios reales<br>' +
+            '📐 <b>OpenRouteService</b> — Tiempos reales caminando<br>' +
             '🧠 <b>OR-Tools</b> — Optimiza el orden de visita<br>' +
-            '💰 <b>Costo total: $0</b>' +
+            '💰 <b>Costo: $0</b>' +
           '</p>' +
-          '<p style="color:var(--c-accent);font-weight:600;font-size:0.9rem;">Escribe /ruta_pie en el chat del bot para iniciar</p>' +
+          '<p style="color:var(--c-accent);font-weight:600;font-size:0.95rem;">Escribe <code>/ruta_pie</code> en el chat del bot</p>' +
         '</div>' +
         '<div class="glass-card" style="padding:16px;">' +
-          '<p style="font-size:0.8rem;color:var(--c-text-muted);margin-bottom:8px;">📋 <b>Flujo:</b></p>' +
-          '<ol style="color:var(--c-text-secondary);font-size:0.8rem;padding-left:20px;margin:0;">' +
+          '<p style="font-size:0.85rem;color:var(--c-text-muted);margin-bottom:8px;">📋 <b>Flujo:</b></p>' +
+          '<ol style="color:var(--c-text-secondary);font-size:0.85rem;padding-left:20px;margin:0;line-height:1.8;">' +
             '<li>Envía tu ubicación con 📎 o escribe dirección</li>' +
-            '<li>Selecciona tipo de negocio (tiendas, farmacias, etc.)</li>' +
+            '<li>Selecciona tipo de negocio (tiendas, farmacias...)</li>' +
             '<li>Elige radio de búsqueda</li>' +
             '<li>Recibe ruta optimizada + botón Google Maps</li>' +
           '</ol>' +
         '</div>';
     }
+    pushNav('data-result');
   },
 
   ruta_camion: function() {
-    // V2: Delegate to Telegram bot (uses ORS + OR-Tools + K-Means)
-    App.showResult({
-      title: '🚚 Ruta de Entregas V2',
-      apiEndpoint: null,
-      render: function() { return ''; }
-    });
+    var titleEl = document.getElementById('data-result-title');
     var content = document.getElementById('data-result-content');
+    if (titleEl) titleEl.textContent = '🚚 Ruta de Entregas V2';
     if (content) {
       content.innerHTML =
         '<div class="glass-card" style="text-align:center;padding:24px;margin-bottom:16px;">' +
           '<div style="font-size:3rem;margin-bottom:12px;">🚚</div>' +
           '<h3 style="font-weight:700;margin-bottom:8px;">Ruta de Entregas V2</h3>' +
           '<p style="color:var(--c-text-muted);font-size:0.85rem;margin-bottom:16px;">' +
-            'Optimiza la entrega vehicular con:<br>' +
-            '📐 <b>ORS</b> — Tiempos reales respetando sentido de calles<br>' +
-            '🧠 <b>OR-Tools</b> — Orden óptimo de entrega (TSP)<br>' +
-            '📊 <b>K-Means</b> — Divide en zonas si hay +10 clientes<br>' +
-            '💰 <b>Costo total: $0</b>' +
+            'Optimiza entregas vehiculares con:<br>' +
+            '📐 <b>ORS</b> — Tiempos reales, sentido de calles<br>' +
+            '🧠 <b>OR-Tools</b> — Orden óptimo (TSP)<br>' +
+            '📊 <b>K-Means</b> — Divide zonas si +10 clientes<br>' +
+            '💰 <b>Costo: $0</b>' +
           '</p>' +
-          '<p style="color:var(--c-accent);font-weight:600;font-size:0.9rem;">Escribe /ruta_camion en el chat del bot</p>' +
+          '<p style="color:var(--c-accent);font-weight:600;font-size:0.95rem;">Escribe <code>/ruta_camion</code> en el chat del bot</p>' +
         '</div>';
     }
+    pushNav('data-result');
   },
 
   ruta_semanal: function() {
-    // V2: Delegate to Telegram bot (uses ORS + OR-Tools for walking)
-    App.showResult({
-      title: '📅 Ruta Semanal V2',
-      apiEndpoint: null,
-      render: function() { return ''; }
-    });
+    var titleEl = document.getElementById('data-result-title');
     var content = document.getElementById('data-result-content');
+    if (titleEl) titleEl.textContent = '📅 Ruta Semanal V2';
     if (content) {
       content.innerHTML =
         '<div class="glass-card" style="text-align:center;padding:24px;margin-bottom:16px;">' +
           '<div style="font-size:3rem;margin-bottom:12px;">📅</div>' +
           '<h3 style="font-weight:700;margin-bottom:8px;">Ruta Semanal V2</h3>' +
           '<p style="color:var(--c-text-muted);font-size:0.85rem;margin-bottom:16px;">' +
-            'Ruta peatonal optimizada por día de visita:<br>' +
+            'Ruta peatonal optimizada por día:<br>' +
             '📐 <b>ORS</b> — Tiempos reales caminando<br>' +
             '🧠 <b>OR-Tools</b> — Orden óptimo de visita<br>' +
-            '💰 <b>Costo total: $0</b>' +
+            '💰 <b>Costo: $0</b>' +
           '</p>' +
-          '<p style="color:var(--c-accent);font-weight:600;font-size:0.9rem;">Escribe /ruta_semanal en el chat del bot</p>' +
+          '<p style="color:var(--c-accent);font-weight:600;font-size:0.95rem;">Escribe <code>/ruta_semanal</code> en el chat del bot</p>' +
         '</div>';
     }
+    pushNav('data-result');
   },
 
   // ── Finanzas Extras ──
