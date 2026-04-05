@@ -2053,37 +2053,56 @@ class AppHandler(BaseHTTPRequestHandler):
                 })
                 return
 
-            logger.info("ROUTE CLIENTS: %d with address for vendor %s", len(with_addr), vendor_id)
-
-            # Geocode and filter by radius
+            # ── PHASE 1: INSTANT — Filter clients WITH cached coordinates ──
             from database import update_client
             stops = []
             errors = []
-            geocoded_count = 0
-            for i, client in enumerate(with_addr[:50]):
+            needs_geocoding = []
+
+            for client in with_addr:
                 lat = client.get('latitud')
                 lng = client.get('longitud')
                 addr = str(client.get('direccion', '')).strip()
 
                 if lat and lng:
-                    # Already cached — no API call needed
+                    # Already cached — instant Haversine check (NO API call)
                     clat, clng = float(lat), float(lng)
+                    dist = haversine(origin_lat, origin_lng, clat, clng)
+                    if dist <= radius_km:
+                        stops.append({
+                            "lat": clat, "lng": clng,
+                            "name": client['nombre'],
+                            "address": addr,
+                            "emoji": "👤",
+                            "phone": client.get('telefono', '') or '',
+                            "opening_hours": "",
+                            "distance_from_origin": round(dist, 2),
+                        })
                 else:
-                    # Geocode and CACHE in DB for future use
-                    clat, clng = geocode_nominatim(addr)
-                    if clat is None:
-                        errors.append(client['nombre'] + ': ' + addr)
-                        continue
-                    # Save coordinates permanently
-                    try:
-                        update_client(client['id'], vendor_id, latitud=clat, longitud=clng)
-                        logger.info("CACHE: Saved coords for client %s (%.4f, %.4f)", client['nombre'][:20], clat, clng)
-                    except Exception:
-                        pass  # Non-critical, just cache miss next time
-                    geocoded_count += 1
-                    if geocoded_count < len(with_addr):
-                        _time.sleep(1.5)
+                    # No coords — queue for geocoding (but limit to save time)
+                    needs_geocoding.append(client)
 
+            cached_count = len(with_addr) - len(needs_geocoding)
+            logger.info("ROUTE CLIENTS: %d cached (instant), %d need geocoding", cached_count, len(needs_geocoding))
+
+            # ── PHASE 2: GEOCODE only first 10 uncached clients (max ~15s) ──
+            geocoded_count = 0
+            MAX_GEOCODE_PER_REQUEST = 10
+
+            for client in needs_geocoding[:MAX_GEOCODE_PER_REQUEST]:
+                addr = str(client.get('direccion', '')).strip()
+                clat, clng = geocode_nominatim(addr)
+                if clat is None:
+                    errors.append(client['nombre'] + ': ' + addr)
+                    continue
+
+                # Cache permanently in DB
+                try:
+                    update_client(client['id'], vendor_id, latitud=clat, longitud=clng)
+                except Exception:
+                    pass
+
+                geocoded_count += 1
                 dist = haversine(origin_lat, origin_lng, clat, clng)
                 if dist <= radius_km:
                     stops.append({
@@ -2096,12 +2115,21 @@ class AppHandler(BaseHTTPRequestHandler):
                         "distance_from_origin": round(dist, 2),
                     })
 
-            logger.info("ROUTE CLIENTS: %d within %d km, %d errors", len(stops), radius_km, len(errors))
+                if geocoded_count < MAX_GEOCODE_PER_REQUEST:
+                    _time.sleep(1.5)
+
+            remaining_to_geocode = max(0, len(needs_geocoding) - MAX_GEOCODE_PER_REQUEST)
+            logger.info("ROUTE CLIENTS: %d in radius, %d geocoded this request, %d pending for next request",
+                        len(stops), geocoded_count, remaining_to_geocode)
 
             if not stops:
+                msg = "No se encontraron clientes en un radio de " + str(int(radius_km)) + " km."
+                if remaining_to_geocode > 0:
+                    msg += " Hay " + str(remaining_to_geocode) + " clientes pendientes de ubicar. Intenta de nuevo para procesar más."
                 self._json_response({
                     "found": 0, "stops": [], "google_maps_url": None,
-                    "errors": errors, "total_time_min": 0,
+                    "errors": errors or [msg], "total_time_min": 0,
+                    "pending_geocode": remaining_to_geocode,
                 })
                 return
 
@@ -2117,6 +2145,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     "google_maps_url": cluster["google_maps_url"],
                     "stops": cluster["stops"],
                     "errors": errors,
+                    "pending_geocode": remaining_to_geocode,
                 })
             else:
                 self._json_response({
@@ -2126,6 +2155,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     "google_maps_url": None,
                     "errors": errors,
                     "total_time_min": 0,
+                    "pending_geocode": remaining_to_geocode,
                 })
 
         except Exception as e:
