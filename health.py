@@ -2056,21 +2056,32 @@ class AppHandler(BaseHTTPRequestHandler):
             logger.info("ROUTE CLIENTS: %d with address for vendor %s", len(with_addr), vendor_id)
 
             # Geocode and filter by radius
+            from database import update_client
             stops = []
             errors = []
+            geocoded_count = 0
             for i, client in enumerate(with_addr[:50]):
                 lat = client.get('latitud')
                 lng = client.get('longitud')
                 addr = str(client.get('direccion', '')).strip()
 
                 if lat and lng:
+                    # Already cached — no API call needed
                     clat, clng = float(lat), float(lng)
                 else:
+                    # Geocode and CACHE in DB for future use
                     clat, clng = geocode_nominatim(addr)
                     if clat is None:
                         errors.append(client['nombre'] + ': ' + addr)
                         continue
-                    if i < len(with_addr) - 1:
+                    # Save coordinates permanently
+                    try:
+                        update_client(client['id'], vendor_id, latitud=clat, longitud=clng)
+                        logger.info("CACHE: Saved coords for client %s (%.4f, %.4f)", client['nombre'][:20], clat, clng)
+                    except Exception:
+                        pass  # Non-critical, just cache miss next time
+                    geocoded_count += 1
+                    if geocoded_count < len(with_addr):
                         _time.sleep(1.5)
 
                 dist = haversine(origin_lat, origin_lng, clat, clng)

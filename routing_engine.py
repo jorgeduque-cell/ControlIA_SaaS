@@ -29,44 +29,97 @@ from config import (
 # =========================================================================
 
 def geocode_nominatim(address, country_code="co"):
-    """Convert an address to (lat, lng) using Nominatim OSM.
-    Free, no API key needed. Rate limit: 1 req/sec (enforced by User-Agent policy).
-    Retries up to 3 times on 429 (Too Many Requests) with exponential backoff.
+    """Convert an address to (lat, lng) using multiple geocoding providers.
+    Cascade: Nominatim → Photon (Komoot) → geocode.maps.co
+    Each provider retries up to 2 times on 429 with exponential backoff.
 
     Returns:
-        tuple: (lat, lng) or (None, None) if not found.
+        tuple: (lat, lng) or (None, None) if all providers fail.
     """
     import time as _time
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            resp = requests.get(
-                f"{NOMINATIM_URL}/search",
-                params={
-                    "q": address,
-                    "format": "json",
-                    "limit": 1,
-                    "countrycodes": country_code,
-                },
-                headers={"User-Agent": "ControlIA-SaaS/2.0 (Telegram Bot)"},
-                timeout=10,
-            )
-            if resp.status_code == 429:
-                wait = 2 ** (attempt + 1)  # 2s, 4s, 8s
-                logger.warning("Nominatim 429 rate limit, waiting %ds (attempt %d/%d)", wait, attempt + 1, max_retries)
-                _time.sleep(wait)
-                continue
-            resp.raise_for_status()
-            data = resp.json()
-            if data:
-                return float(data[0]["lat"]), float(data[0]["lon"])
-            return None, None
-        except Exception as e:
-            logger.error("Nominatim geocode error: %s", e)
-            if attempt < max_retries - 1:
+
+    def _try_nominatim(addr, cc):
+        """Primary: OpenStreetMap Nominatim."""
+        for attempt in range(2):
+            try:
+                resp = requests.get(
+                    f"{NOMINATIM_URL}/search",
+                    params={"q": addr, "format": "json", "limit": 1, "countrycodes": cc},
+                    headers={"User-Agent": "ControlIA-SaaS/2.0 (Telegram Bot)"},
+                    timeout=10,
+                )
+                if resp.status_code == 429:
+                    _time.sleep(2 ** (attempt + 1))
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                if data:
+                    return float(data[0]["lat"]), float(data[0]["lon"])
+                return None, None
+            except Exception:
                 _time.sleep(2)
-                continue
-            return None, None
+        return None, None
+
+    def _try_photon(addr, cc):
+        """Fallback 1: Photon by Komoot (OSM-based, lenient rate limits)."""
+        for attempt in range(2):
+            try:
+                resp = requests.get(
+                    "https://photon.komoot.io/api",
+                    params={"q": addr, "limit": 1, "lang": "es"},
+                    headers={"User-Agent": "ControlIA-SaaS/2.0"},
+                    timeout=10,
+                )
+                if resp.status_code == 429:
+                    _time.sleep(2 ** (attempt + 1))
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                features = data.get("features", [])
+                if features:
+                    coords = features[0]["geometry"]["coordinates"]
+                    return float(coords[1]), float(coords[0])  # GeoJSON: [lng, lat]
+                return None, None
+            except Exception:
+                _time.sleep(2)
+        return None, None
+
+    def _try_maps_co(addr, cc):
+        """Fallback 2: geocode.maps.co (free, no key for basic use)."""
+        for attempt in range(2):
+            try:
+                resp = requests.get(
+                    "https://geocode.maps.co/search",
+                    params={"q": addr, "format": "json", "limit": 1, "countrycodes": cc},
+                    headers={"User-Agent": "ControlIA-SaaS/2.0"},
+                    timeout=10,
+                )
+                if resp.status_code == 429:
+                    _time.sleep(2 ** (attempt + 1))
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                if data:
+                    return float(data[0]["lat"]), float(data[0]["lon"])
+                return None, None
+            except Exception:
+                _time.sleep(2)
+        return None, None
+
+    # ── Cascade through providers ──
+    providers = [
+        ("Nominatim", _try_nominatim),
+        ("Photon", _try_photon),
+        ("Maps.co", _try_maps_co),
+    ]
+    for name, fn in providers:
+        lat, lng = fn(address, country_code)
+        if lat is not None:
+            logger.info("Geocoded '%s' via %s → (%.4f, %.4f)", address[:50], name, lat, lng)
+            return lat, lng
+        logger.warning("Geocode failed with %s for '%s', trying next...", name, address[:50])
+
+    logger.error("All geocode providers failed for '%s'", address[:80])
     return None, None
 
 
