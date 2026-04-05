@@ -1254,7 +1254,7 @@ App._crGPS = function() {
       App._clientRoute.lng = pos.coords.longitude;
       App._clientRoute.label = 'GPS: ' + pos.coords.latitude.toFixed(4) + ', ' + pos.coords.longitude.toFixed(4);
       haptic('success');
-      App._crLoadClients();
+      App._crPickRadius();
     },
     function() {
       showToast('No se pudo obtener ubicación', 'error');
@@ -1287,7 +1287,7 @@ App._crGeocode = function() {
       App._clientRoute.lng = data.lng;
       App._clientRoute.label = addr;
       haptic('success');
-      App._crLoadClients();
+      App._crPickRadius();
     })
     .catch(function() {
       showToast('Error buscando dirección', 'error');
@@ -1295,106 +1295,40 @@ App._crGeocode = function() {
     });
 };
 
-// Step 2: Load clients and show checklist
-App._crLoadClients = function() {
-  _rwRender('👥 Cargando clientes...',
+// Step 2: Pick radius
+App._crPickRadius = function() {
+  var html =
+    '<div class="glass-card" style="padding:12px;margin-bottom:10px;">' +
+      '<p style="font-weight:600;font-size:0.85rem;">📍 Salida: <span style="color:var(--c-accent);">' + App._clientRoute.label + '</span></p>' +
+    '</div>' +
+    '<div class="glass-card" style="padding:20px;margin-bottom:12px;">' +
+      '<h4 style="font-weight:700;margin-bottom:12px;">📏 ¿Qué tan lejos quieres cubrir?</h4>' +
+      '<p style="font-size:0.8rem;color:var(--c-text-muted);margin-bottom:14px;">El sistema buscará automáticamente todos tus clientes dentro de este radio y armará la ruta óptima.</p>' +
+      '<button class="btn btn--secondary w-full" style="margin-bottom:8px;" onclick="App._crAutoRoute(2)">🚶 2 km — Caminando</button>' +
+      '<button class="btn btn--secondary w-full" style="margin-bottom:8px;" onclick="App._crAutoRoute(5)">🚶 5 km — Caminata larga</button>' +
+      '<button class="btn btn--secondary w-full" style="margin-bottom:8px;" onclick="App._crAutoRoute(10)">🚗 10 km — Vehículo</button>' +
+      '<button class="btn btn--secondary w-full" style="margin-bottom:8px;" onclick="App._crAutoRoute(20)">🚗 20 km — Zona amplia</button>' +
+      '<button class="btn btn--secondary w-full" onclick="App._crAutoRoute(50)">🌆 Toda la ciudad</button>' +
+    '</div>';
+
+  _rwRender('👥 Radio de Búsqueda', html);
+};
+
+// Step 3: Auto-build route — backend filters by proximity
+App._crAutoRoute = function(radiusKm) {
+  _rwRender('🗺️ Generando Ruta...',
     '<div class="glass-card" style="text-align:center;padding:24px;">' +
-      '<div class="btn__spinner" style="border-color:rgba(108,60,225,0.3);border-top-color:#6C3CE1;margin:0 auto 12px;"></div>' +
-      '<p style="color:var(--c-text-muted);font-size:0.85rem;">Buscando clientes con dirección...</p>' +
+      '<div class="btn__spinner" style="border-color:rgba(108,60,225,0.3);border-top-color:#6C3CE1;margin:0 auto 16px;"></div>' +
+      '<h3 style="font-weight:700;margin-bottom:8px;">Buscando clientes cercanos...</h3>' +
+      '<p style="color:var(--c-text-muted);font-size:0.8rem;">Geocodificando direcciones y optimizando ruta.<br>Esto puede tardar unos segundos.</p>' +
     '</div>'
   );
 
-  API.get('/api/clients')
-    .then(function(data) {
-      var items = data.items || [];
-      // Filter only clients with address
-      var withAddr = items.filter(function(c) { return c.direccion && c.direccion.trim(); });
-
-      if (withAddr.length === 0) {
-        _rwRender('👥 Sin Clientes',
-          '<div class="glass-card" style="text-align:center;padding:24px;">' +
-            '<div style="font-size:3rem;margin-bottom:12px;">📭</div>' +
-            '<p style="color:var(--c-text-muted);margin-bottom:16px;">No tienes clientes con dirección registrada.</p>' +
-            '<button class="btn btn--primary w-full" onclick="CMD_HANDLERS.nuevo_cliente()">👤 Agregar Cliente</button>' +
-          '</div>'
-        );
-        return;
-      }
-
-      App._clientRoute.clients = withAddr;
-
-      var html =
-        '<div class="glass-card" style="padding:12px;margin-bottom:10px;">' +
-          '<p style="font-weight:600;font-size:0.85rem;">📍 Punto de inicio: <span style="color:var(--c-accent);">' + App._clientRoute.label + '</span></p>' +
-        '</div>' +
-        '<div class="glass-card" style="padding:14px;margin-bottom:10px;">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
-            '<h4 style="font-weight:700;margin:0;">Selecciona los clientes a visitar</h4>' +
-            '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.8rem;color:var(--c-accent);">' +
-              '<input type="checkbox" id="cr-select-all" onchange="App._crToggleAll(this.checked)" style="accent-color:var(--c-accent);"> Todos' +
-            '</label>' +
-          '</div>';
-
-      withAddr.forEach(function(c, i) {
-        html +=
-          '<label style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;cursor:pointer;' +
-            (i < withAddr.length - 1 ? 'border-bottom:1px solid var(--c-border);' : '') + '">' +
-            '<input type="checkbox" class="cr-client-cb" value="' + c.id + '" style="accent-color:var(--c-accent);margin-top:3px;" checked>' +
-            '<div style="flex:1;min-width:0;">' +
-              '<div style="font-weight:600;font-size:0.9rem;">' + c.nombre + '</div>' +
-              '<div style="font-size:0.75rem;color:var(--c-text-muted);margin-top:2px;">' + c.direccion + '</div>' +
-              (c.telefono ? '<div style="font-size:0.7rem;color:var(--c-text-secondary);margin-top:1px;">📞 ' + c.telefono + '</div>' : '') +
-            '</div>' +
-          '</label>';
-      });
-
-      html += '</div>' +
-        '<button class="btn btn--accent w-full" onclick="App._crBuildRoute()" id="cr-build-btn" style="margin-top:10px;">' +
-          '<span id="cr-build-text">🗺️ Generar Ruta Optimizada</span>' +
-          '<div id="cr-build-spinner" class="btn__spinner hidden"></div>' +
-        '</button>';
-
-      _rwRender('👥 ' + withAddr.length + ' Clientes con Dirección', html);
-
-      // Pre-check "select all"
-      setTimeout(function() {
-        var selAll = document.getElementById('cr-select-all');
-        if (selAll) selAll.checked = true;
-      }, 50);
-    })
-    .catch(function() {
-      showToast('Error cargando clientes', 'error');
-    });
-};
-
-App._crToggleAll = function(checked) {
-  var cbs = document.querySelectorAll('.cr-client-cb');
-  cbs.forEach(function(cb) { cb.checked = checked; });
-};
-
-// Step 3: Build route
-App._crBuildRoute = function() {
-  var cbs = document.querySelectorAll('.cr-client-cb:checked');
-  var ids = [];
-  cbs.forEach(function(cb) { ids.push(parseInt(cb.value)); });
-
-  if (ids.length === 0) {
-    showToast('Selecciona al menos un cliente', 'error');
-    return;
-  }
-
-  var btn = document.getElementById('cr-build-btn');
-  var text = document.getElementById('cr-build-text');
-  var spin = document.getElementById('cr-build-spinner');
-  if (btn) btn.disabled = true;
-  if (text) text.classList.add('hidden');
-  if (spin) spin.classList.remove('hidden');
-
   API.post('/api/routes/clients', {
-    client_ids: ids,
     origin_lat: App._clientRoute.lat,
     origin_lng: App._clientRoute.lng,
-    profile: 'foot-walking',
+    radius_km: radiusKm,
+    profile: radiusKm <= 5 ? 'foot-walking' : 'driving-car',
   })
     .then(function(data) {
       haptic('success');
@@ -1441,23 +1375,23 @@ App._crBuildRoute = function() {
             '</div>';
         });
         html += '</div>';
+
+        html += '<button class="btn btn--secondary w-full" style="margin-top:12px;" onclick="App._rwFromClients()">🔄 Armar otra ruta</button>';
       } else {
         html +=
           '<div class="glass-card" style="text-align:center;padding:24px;">' +
             '<div style="font-size:3rem;margin-bottom:12px;">📭</div>' +
-            '<p style="color:var(--c-text-muted);">No se pudo geocodificar ninguna dirección.</p>' +
+            '<p style="color:var(--c-text-muted);margin-bottom:12px;">No se encontraron clientes en un radio de ' + radiusKm + ' km.</p>' +
+            '<button class="btn btn--secondary w-full" onclick="App._crPickRadius()">📏 Cambiar radio</button>' +
           '</div>';
       }
 
-      html += '<button class="btn btn--secondary w-full" style="margin-top:12px;" onclick="App._rwFromClients()">🔄 Armar otra ruta</button>';
       _rwRender('🗺️ Ruta Optimizada', html);
     })
     .catch(function(err) {
       haptic('error');
       showToast('Error: ' + (err.message || 'Intenta de nuevo'), 'error');
-      if (btn) btn.disabled = false;
-      if (text) text.classList.remove('hidden');
-      if (spin) spin.classList.add('hidden');
+      App._crPickRadius();
     });
 };
 

@@ -2017,65 +2017,75 @@ class AppHandler(BaseHTTPRequestHandler):
     # ─────────────────────────────────────────────────────────────────
 
     def _api_route_clients(self, vendor_id, body):
-        """POST /api/routes/clients — Build optimized route from selected clients."""
+        """POST /api/routes/clients — Build optimized route from nearby clients."""
+        import math
         import time as _time
         from database import get_clients
         from routing_engine import geocode_nominatim, build_optimized_route
 
-        client_ids = body.get('client_ids', [])
         origin_lat = body.get('origin_lat')
         origin_lng = body.get('origin_lng')
+        radius_km = float(body.get('radius_km', 10))
         profile = body.get('profile', 'foot-walking')
 
-        if not client_ids:
-            self._send_error(400, "Selecciona al menos 1 cliente")
+        if not origin_lat or not origin_lng:
+            self._send_error(400, "Se requiere punto de origen (origin_lat, origin_lng)")
             return
 
-        try:
-            # Fetch all clients and filter selected ones
-            all_clients = get_clients(vendor_id)
-            selected = [dict(c) for c in all_clients if c['id'] in client_ids]
+        origin_lat = float(origin_lat)
+        origin_lng = float(origin_lng)
 
-            if not selected:
-                self._send_error(400, "No se encontraron los clientes seleccionados")
+        def haversine(lat1, lon1, lat2, lon2):
+            R = 6371.0
+            d_lat = math.radians(lat2 - lat1)
+            d_lon = math.radians(lon2 - lon1)
+            a = math.sin(d_lat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(d_lon / 2) ** 2
+            return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+        try:
+            all_clients = get_clients(vendor_id)
+            with_addr = [dict(c) for c in all_clients if c.get('direccion') and str(c['direccion']).strip()]
+
+            if not with_addr:
+                self._json_response({
+                    "found": 0, "stops": [], "google_maps_url": None,
+                    "errors": ["No tienes clientes con dirección registrada."], "total_time_min": 0,
+                })
                 return
 
-            logger.info("ROUTE CLIENTS: %d selected for vendor %s", len(selected), vendor_id)
+            logger.info("ROUTE CLIENTS: %d with address for vendor %s", len(with_addr), vendor_id)
 
-            # Geocode clients that have addresses but no lat/lng
+            # Geocode and filter by radius
             stops = []
             errors = []
-            for i, client in enumerate(selected[:25]):
+            for i, client in enumerate(with_addr[:50]):
                 lat = client.get('latitud')
                 lng = client.get('longitud')
-                addr = client.get('direccion', '')
+                addr = str(client.get('direccion', '')).strip()
 
                 if lat and lng:
+                    clat, clng = float(lat), float(lng)
+                else:
+                    clat, clng = geocode_nominatim(addr)
+                    if clat is None:
+                        errors.append(client['nombre'] + ': ' + addr)
+                        continue
+                    if i < len(with_addr) - 1:
+                        _time.sleep(1.1)
+
+                dist = haversine(origin_lat, origin_lng, clat, clng)
+                if dist <= radius_km:
                     stops.append({
-                        "lat": float(lat), "lng": float(lng),
+                        "lat": clat, "lng": clng,
                         "name": client['nombre'],
                         "address": addr,
-                        "emoji": "👤", "phone": client.get('telefono', ''),
-                        "opening_hours": "", "distance_from_origin": 0,
+                        "emoji": "👤",
+                        "phone": client.get('telefono', '') or '',
+                        "opening_hours": "",
+                        "distance_from_origin": round(dist, 2),
                     })
-                elif addr:
-                    glat, glng = geocode_nominatim(addr)
-                    if glat is not None:
-                        stops.append({
-                            "lat": glat, "lng": glng,
-                            "name": client['nombre'],
-                            "address": addr,
-                            "emoji": "👤", "phone": client.get('telefono', ''),
-                            "opening_hours": "", "distance_from_origin": 0,
-                        })
-                    else:
-                        errors.append(client['nombre'] + ': ' + addr)
-                    if i < len(selected) - 1:
-                        _time.sleep(1.1)
-                else:
-                    errors.append(client['nombre'] + ' (sin dirección)')
 
-            logger.info("ROUTE CLIENTS: Geocoded %d stops, %d errors", len(stops), len(errors))
+            logger.info("ROUTE CLIENTS: %d within %d km, %d errors", len(stops), radius_km, len(errors))
 
             if not stops:
                 self._json_response({
@@ -2084,12 +2094,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 })
                 return
 
-            # Determine origin
-            if origin_lat and origin_lng:
-                origin = (float(origin_lat), float(origin_lng))
-            else:
-                origin = (stops[0]["lat"], stops[0]["lng"])
-
+            origin = (origin_lat, origin_lng)
             clusters = build_optimized_route(origin, stops, profile)
 
             if clusters:
