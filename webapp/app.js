@@ -840,23 +840,52 @@ function _rwRender(title, html) {
 
 // Step 1: Get GPS Location
 App._rwStep1 = function() {
-  _rwRender('📍 Ubicación',
-    '<div class="glass-card" style="text-align:center;padding:24px;">' +
-      '<div style="font-size:3rem;margin-bottom:12px;">📍</div>' +
-      '<h3 style="font-weight:700;margin-bottom:8px;">Obteniendo tu ubicación...</h3>' +
-      '<p style="color:var(--c-text-muted);font-size:0.85rem;">Permite el acceso a GPS para localizar negocios cerca de ti.</p>' +
-      '<div style="margin-top:16px;"><div class="btn__spinner" style="border-color:rgba(108,60,225,0.3);border-top-color:#6C3CE1;margin:0 auto;"></div></div>' +
-    '</div>'
-  );
+  var html =
+    '<div class="glass-card" style="padding:20px;margin-bottom:12px;">' +
+      '<h4 style="font-weight:700;margin-bottom:12px;">📍 ¿Desde dónde sales?</h4>' +
+      '<button class="btn btn--primary w-full" onclick="App._rwGPS()" id="rw-gps-btn" style="margin-bottom:16px;">' +
+        '<span id="rw-gps-text">📡 Usar mi ubicación actual</span>' +
+        '<div id="rw-gps-spinner" class="btn__spinner hidden"></div>' +
+      '</button>' +
+      '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">' +
+        '<div style="flex:1;height:1px;background:var(--c-border);"></div>' +
+        '<span style="color:var(--c-text-muted);font-size:0.8rem;">o escribe una dirección</span>' +
+        '<div style="flex:1;height:1px;background:var(--c-border);"></div>' +
+      '</div>' +
+      '<input type="text" id="rw-address" placeholder="Ej: Calle 80 con Carrera 30, Bogotá" ' +
+        'style="width:100%;padding:12px 14px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:10px;color:var(--c-text);font-size:0.9rem;outline:none;box-sizing:border-box;margin-bottom:10px;">' +
+      '<button class="btn btn--secondary w-full" onclick="App._rwGeocode()" id="rw-geo-btn">' +
+        '<span id="rw-geo-text">🔍 Buscar dirección</span>' +
+        '<div id="rw-geo-spinner" class="btn__spinner hidden"></div>' +
+      '</button>' +
+    '</div>';
+
+  _rwRender('📍 Punto de Inicio', html);
   pushNav('data-result');
 
+  // Enter key on address input
+  setTimeout(function() {
+    var inp = document.getElementById('rw-address');
+    if (inp) inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); App._rwGeocode(); }
+    });
+  }, 100);
+};
+
+// GPS auto-detect
+App._rwGPS = function() {
+  var btn = document.getElementById('rw-gps-btn');
+  var text = document.getElementById('rw-gps-text');
+  var spin = document.getElementById('rw-gps-spinner');
+  if (btn) btn.disabled = true;
+  if (text) text.classList.add('hidden');
+  if (spin) spin.classList.remove('hidden');
+
   if (!navigator.geolocation) {
-    _rwRender('📍 Ubicación',
-      '<div class="glass-card" style="text-align:center;padding:24px;">' +
-        '<div style="font-size:3rem;margin-bottom:12px;">❌</div>' +
-        '<p style="color:var(--c-text-muted);">Tu dispositivo no soporta GPS.</p>' +
-      '</div>'
-    );
+    showToast('Tu dispositivo no soporta GPS', 'error');
+    if (btn) btn.disabled = false;
+    if (text) text.classList.remove('hidden');
+    if (spin) spin.classList.add('hidden');
     return;
   }
 
@@ -864,28 +893,64 @@ App._rwStep1 = function() {
     function(pos) {
       App._rw.lat = pos.coords.latitude;
       App._rw.lng = pos.coords.longitude;
+      App._rw.originLabel = 'GPS: ' + pos.coords.latitude.toFixed(4) + ', ' + pos.coords.longitude.toFixed(4);
       haptic('success');
       App._rwStep2();
     },
     function() {
-      _rwRender('📍 Ubicación',
-        '<div class="glass-card" style="text-align:center;padding:24px;">' +
-          '<div style="font-size:3rem;margin-bottom:12px;">⚠️</div>' +
-          '<p style="color:var(--c-text-muted);margin-bottom:16px;">No se pudo obtener tu ubicación.<br>Verifica los permisos de GPS.</p>' +
-          '<button class="btn btn--primary w-full" onclick="App._rwStep1()">🔄 Reintentar</button>' +
-        '</div>'
-      );
+      showToast('No se pudo obtener tu ubicación. Verifica permisos de GPS.', 'error');
+      haptic('error');
+      if (btn) btn.disabled = false;
+      if (text) text.classList.remove('hidden');
+      if (spin) spin.classList.add('hidden');
     },
     { enableHighAccuracy: true, timeout: 15000 }
   );
+};
+
+// Geocode typed address
+App._rwGeocode = function() {
+  var inp = document.getElementById('rw-address');
+  var addr = inp ? inp.value.trim() : '';
+  if (!addr) { showToast('Escribe una dirección', 'error'); return; }
+
+  var btn = document.getElementById('rw-geo-btn');
+  var text = document.getElementById('rw-geo-text');
+  var spin = document.getElementById('rw-geo-spinner');
+  if (btn) btn.disabled = true;
+  if (text) text.classList.add('hidden');
+  if (spin) spin.classList.remove('hidden');
+
+  API.post('/api/geocode', { address: addr })
+    .then(function(data) {
+      if (!data.found) {
+        showToast('No se encontró esa dirección. Intenta ser más específico.', 'error');
+        haptic('error');
+        if (btn) btn.disabled = false;
+        if (text) text.classList.remove('hidden');
+        if (spin) spin.classList.add('hidden');
+        return;
+      }
+      App._rw.lat = data.lat;
+      App._rw.lng = data.lng;
+      App._rw.originLabel = addr;
+      haptic('success');
+      App._rwStep2();
+    })
+    .catch(function(err) {
+      showToast('Error: ' + (err.message || 'Intenta de nuevo'), 'error');
+      if (btn) btn.disabled = false;
+      if (text) text.classList.remove('hidden');
+      if (spin) spin.classList.add('hidden');
+    });
 };
 
 // Step 2: Business Type Selection
 App._rwStep2 = function() {
   var html =
     '<div class="glass-card" style="padding:16px;margin-bottom:12px;">' +
-      '<p style="font-weight:600;font-size:0.85rem;">📍 Ubicación detectada</p>' +
-      '<p style="color:var(--c-text-muted);font-size:0.8rem;">' + App._rw.lat.toFixed(4) + ', ' + App._rw.lng.toFixed(4) + '</p>' +
+      '<p style="font-weight:600;font-size:0.85rem;">📍 Punto de inicio</p>' +
+      '<p style="color:var(--c-text-muted);font-size:0.8rem;">' + (App._rw.originLabel || (App._rw.lat.toFixed(4) + ', ' + App._rw.lng.toFixed(4))) + '</p>' +
     '</div>' +
     '<div class="glass-card" style="padding:20px;margin-bottom:12px;">' +
       '<h4 style="font-weight:700;margin-bottom:12px;">🎯 ¿Qué tipo de negocio buscas?</h4>' +

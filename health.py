@@ -330,6 +330,8 @@ class AppHandler(BaseHTTPRequestHandler):
             self._api_generate_backup(vendor_id)
         elif path == '/api/routes/prospect':
             self._api_route_prospect(vendor_id, body)
+        elif path == '/api/geocode':
+            self._api_geocode(body)
         else:
             self._send_error(404, "API endpoint not found")
 
@@ -1742,6 +1744,25 @@ class AppHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.error("Prospect API error: %s", e, exc_info=True)
             self._send_error(500, f"Error en búsqueda: {e}")
+
+    def _api_geocode(self, body):
+        """POST /api/geocode — Convert address text to coordinates via Nominatim."""
+        from routing_engine import geocode_nominatim
+
+        address = (body.get('address') or '').strip()
+        if not address:
+            self._send_error(400, "address is required")
+            return
+
+        try:
+            lat, lng = geocode_nominatim(address)
+            if lat is None:
+                self._json_response({"found": False, "lat": None, "lng": None})
+            else:
+                self._json_response({"found": True, "lat": lat, "lng": lng})
+        except Exception as e:
+            logger.error("Geocode API error: %s", e)
+            self._send_error(500, f"Error geocodificando: {e}")
 
     def log_message(self, format, *args):
         """Silence default HTTP logging to keep console clean."""
