@@ -1776,23 +1776,39 @@ class AppHandler(BaseHTTPRequestHandler):
         """POST /api/routes/excel — Parse Excel, geocode addresses, optimize route."""
         import base64
         import io
+        import csv
         import time as _time
-        from openpyxl import load_workbook
         from routing_engine import geocode_nominatim, build_optimized_route
 
         file_b64 = body.get('file')
+        filename = (body.get('filename') or '').lower()
         if not file_b64:
             self._send_error(400, "No se recibió archivo")
             return
 
         try:
-            # Decode base64 file
             file_bytes = base64.b64decode(file_b64)
-            wb = load_workbook(io.BytesIO(file_bytes), read_only=True)
-            ws = wb.active
+            is_csv = filename.endswith('.csv')
 
-            # Read header row and auto-detect address column
-            headers = [str(c.value or '').strip().lower() for c in next(ws.iter_rows(min_row=1, max_row=1))]
+            # ── Parse file into headers + data rows ──
+            if is_csv:
+                text = file_bytes.decode('utf-8-sig', errors='replace')
+                reader = csv.reader(io.StringIO(text))
+                all_rows = list(reader)
+                if not all_rows:
+                    self._send_error(400, "Archivo CSV vacío")
+                    return
+                headers = [h.strip().lower() for h in all_rows[0]]
+                data_rows = all_rows[1:]
+            else:
+                from openpyxl import load_workbook
+                wb = load_workbook(io.BytesIO(file_bytes), read_only=True)
+                ws = wb.active
+                headers = [str(c.value or '').strip().lower() for c in next(ws.iter_rows(min_row=1, max_row=1))]
+                data_rows = [list(row) for row in ws.iter_rows(min_row=2, values_only=True)]
+                wb.close()
+
+            # Auto-detect address column
             addr_col = None
             name_col = None
             for i, h in enumerate(headers):
@@ -1804,12 +1820,12 @@ class AppHandler(BaseHTTPRequestHandler):
             if addr_col is None:
                 self._send_error(400,
                     "No se encontró columna de dirección. "
-                    "El Excel debe tener una columna llamada 'Dirección', 'Address' o 'Domicilio'.")
+                    "El archivo debe tener una columna llamada 'Dirección', 'Address' o 'Domicilio'.")
                 return
 
             # Extract rows
             rows = []
-            for row in ws.iter_rows(min_row=2, values_only=True):
+            for row in data_rows:
                 cells = list(row)
                 addr = str(cells[addr_col] or '').strip() if addr_col < len(cells) else ''
                 name = str(cells[name_col] or '').strip() if name_col is not None and name_col < len(cells) else ''
@@ -1887,32 +1903,48 @@ class AppHandler(BaseHTTPRequestHandler):
     # ─────────────────────────────────────────────────────────────────
 
     def _api_import_clients(self, vendor_id, body):
-        """POST /api/clients/import — Parse Excel and bulk-create clients."""
+        """POST /api/clients/import — Parse Excel/CSV and bulk-create clients."""
         import base64
         import io
-        from openpyxl import load_workbook
+        import csv
 
         file_b64 = body.get('file')
+        filename = (body.get('filename') or '').lower()
         if not file_b64:
             self._send_error(400, "No se recibió archivo")
             return
 
         try:
             file_bytes = base64.b64decode(file_b64)
-            wb = load_workbook(io.BytesIO(file_bytes), read_only=True)
-            ws = wb.active
+            is_csv = filename.endswith('.csv')
 
-            # Read headers
-            headers = [str(c.value or '').strip().lower() for c in next(ws.iter_rows(min_row=1, max_row=1))]
+            # ── Parse file into headers + data rows ──
+            if is_csv:
+                text = file_bytes.decode('utf-8-sig', errors='replace')
+                reader = csv.reader(io.StringIO(text))
+                all_rows = list(reader)
+                if not all_rows:
+                    self._send_error(400, "Archivo CSV vacío")
+                    return
+                headers = [h.strip().lower() for h in all_rows[0]]
+                data_rows = all_rows[1:]
+            else:
+                from openpyxl import load_workbook
+                wb = load_workbook(io.BytesIO(file_bytes), read_only=True)
+                ws = wb.active
+                headers = [str(c.value or '').strip().lower() for c in next(ws.iter_rows(min_row=1, max_row=1))]
+                data_rows = [list(row) for row in ws.iter_rows(min_row=2, values_only=True)]
+                wb.close()
 
-            # Map columns
+            # Map columns (auto-detect by alias)
             col_map = {}
             mappings = {
                 'nombre': ('nombre', 'name', 'cliente', 'negocio', 'razon social', 'razón social'),
-                'telefono': ('telefono', 'teléfono', 'phone', 'celular', 'whatsapp', 'tel'),
+                'telefono': ('telefono', 'teléfono', 'phone', 'celular', 'whatsapp', 'tel', 'movil', 'móvil'),
                 'direccion': ('direccion', 'dirección', 'address', 'dir', 'domicilio', 'ubicacion', 'ubicación'),
-                'tipo_negocio': ('tipo', 'tipo_negocio', 'categoria', 'categoría', 'type'),
+                'tipo_negocio': ('tipo', 'tipo_negocio', 'categoria', 'categoría', 'type', 'giro'),
                 'dia_visita': ('dia', 'día', 'dia_visita', 'día_visita', 'day'),
+                'zona': ('zona', 'zone', 'sector', 'barrio', 'localidad', 'ruta'),
             }
             for field, aliases in mappings.items():
                 for i, h in enumerate(headers):
@@ -1923,24 +1955,37 @@ class AppHandler(BaseHTTPRequestHandler):
             if 'nombre' not in col_map:
                 self._send_error(400,
                     "No se encontró columna de nombre. "
-                    "El Excel debe tener una columna llamada 'Nombre', 'Cliente' o 'Negocio'.")
+                    "El archivo debe tener una columna llamada 'Nombre', 'Cliente' o 'Negocio'.")
                 return
+
+            def _cell(cells, field):
+                idx = col_map.get(field, -1)
+                if idx >= 0 and idx < len(cells):
+                    return str(cells[idx] or '').strip()
+                return ''
 
             # Extract and insert
             conn = get_connection(vendor_id)
             inserted = 0
             skipped = 0
             try:
-                for row in ws.iter_rows(min_row=2, values_only=True):
+                for row in data_rows:
                     cells = list(row)
-                    name = str(cells[col_map['nombre']] or '').strip() if col_map['nombre'] < len(cells) else ''
+                    name = _cell(cells, 'nombre')
                     if not name:
                         continue
 
-                    phone = str(cells[col_map.get('telefono', -1)] or '').strip() if col_map.get('telefono', -1) >= 0 and col_map.get('telefono', -1) < len(cells) else ''
-                    address = str(cells[col_map.get('direccion', -1)] or '').strip() if col_map.get('direccion', -1) >= 0 and col_map.get('direccion', -1) < len(cells) else ''
-                    biz_type = str(cells[col_map.get('tipo_negocio', -1)] or '').strip() if col_map.get('tipo_negocio', -1) >= 0 and col_map.get('tipo_negocio', -1) < len(cells) else ''
-                    visit_day = str(cells[col_map.get('dia_visita', -1)] or '').strip() if col_map.get('dia_visita', -1) >= 0 and col_map.get('dia_visita', -1) < len(cells) else ''
+                    phone = _cell(cells, 'telefono')
+                    address = _cell(cells, 'direccion')
+                    biz_type = _cell(cells, 'tipo_negocio')
+                    visit_day = _cell(cells, 'dia_visita')
+                    zona = _cell(cells, 'zona')
+
+                    # Append zona to address if present
+                    if zona and address:
+                        address = f"{address} — Zona: {zona}"
+                    elif zona and not address:
+                        address = f"Zona: {zona}"
 
                     try:
                         conn.execute("""
@@ -1955,12 +2000,12 @@ class AppHandler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
 
-            wb.close()
             logger.info("CLIENT IMPORT: vendor=%s inserted=%d skipped=%d", vendor_id, inserted, skipped)
             self._json_response({
                 "inserted": inserted,
                 "skipped": skipped,
                 "total": inserted + skipped,
+                "columns_detected": list(col_map.keys()),
             })
 
         except Exception as e:

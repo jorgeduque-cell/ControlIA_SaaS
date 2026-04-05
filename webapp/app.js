@@ -1199,8 +1199,8 @@ App._excelRouteUpload = function(input) {
   if (!input.files || !input.files[0]) return;
   var file = input.files[0];
 
-  if (!file.name.match(/\.xlsx?$/i)) {
-    showToast('Solo archivos .xlsx', 'error');
+  if (!file.name.match(/\.(xlsx?|csv)$/i)) {
+    showToast('Solo archivos .xlsx o .csv', 'error');
     return;
   }
 
@@ -1221,7 +1221,7 @@ App._excelRouteUpload = function(input) {
   var reader = new FileReader();
   reader.onload = function(e) {
     var base64 = e.target.result.split(',')[1]; // Remove data:...;base64, prefix
-    API.post('/api/routes/excel', { file: base64, profile: profile })
+    API.post('/api/routes/excel', { file: base64, profile: profile, filename: file.name })
       .then(function(data) {
         haptic('success');
         // Build results
@@ -1291,8 +1291,8 @@ App._excelClientUpload = function(input) {
   if (!input.files || !input.files[0]) return;
   var file = input.files[0];
 
-  if (!file.name.match(/\.xlsx?$/i)) {
-    showToast('Solo archivos .xlsx', 'error');
+  if (!file.name.match(/\.(xlsx?|csv)$/i)) {
+    showToast('Solo archivos .xlsx o .csv', 'error');
     return;
   }
 
@@ -1307,13 +1307,14 @@ App._excelClientUpload = function(input) {
   var reader = new FileReader();
   reader.onload = function(e) {
     var base64 = e.target.result.split(',')[1];
-    API.post('/api/clients/import', { file: base64 })
+    API.post('/api/clients/import', { file: base64, filename: file.name })
       .then(function(data) {
         haptic('success');
         _rwRender('📥 Importación Completa',
           '<div class="glass-card" style="text-align:center;padding:24px;">' +
             '<div style="font-size:3rem;margin-bottom:12px;">✅</div>' +
             '<h3 style="font-weight:700;margin-bottom:16px;">Importación Exitosa</h3>' +
+            (data.columns_detected ? '<p style="font-size:0.75rem;color:var(--c-text-muted);margin-bottom:12px;">Columnas detectadas: ' + data.columns_detected.join(', ') + '</p>' : '') +
             '<div style="display:flex;gap:12px;justify-content:center;margin-bottom:16px;">' +
               '<div class="glass-card" style="padding:14px 20px;text-align:center;">' +
                 '<div style="font-size:1.5rem;font-weight:700;color:#00E676;">' + data.inserted + '</div>' +
@@ -2263,7 +2264,7 @@ var CMD_HANDLERS = {
         '<div style="text-align:center;margin-bottom:16px;">' +
           '<div style="font-size:3rem;margin-bottom:8px;">📋</div>' +
           '<h3 style="font-weight:700;margin-bottom:6px;">Optimizar Ruta desde Excel</h3>' +
-          '<p style="color:var(--c-text-muted);font-size:0.8rem;">Sube un archivo Excel (.xlsx) con las direcciones de tus clientes y generaremos la ruta más eficiente.</p>' +
+          '<p style="color:var(--c-text-muted);font-size:0.8rem;">Sube un archivo Excel (.xlsx) o CSV con las direcciones de tus clientes y generaremos la ruta más eficiente.</p>' +
         '</div>' +
         '<div class="glass-card" style="padding:14px;margin-bottom:16px;background:var(--c-bg-input);border:1px dashed var(--c-border);">' +
           '<p style="font-size:0.8rem;color:var(--c-text-muted);margin-bottom:8px;"><b>📌 Formato requerido:</b></p>' +
@@ -2276,8 +2277,8 @@ var CMD_HANDLERS = {
         '<label style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px;border:2px dashed var(--c-accent);border-radius:12px;cursor:pointer;transition:opacity 0.2s;" id="rw-excel-drop">' +
           '<span style="font-size:1.5rem;">📁</span>' +
           '<span style="font-size:0.85rem;color:var(--c-accent);font-weight:600;">Toca para seleccionar archivo</span>' +
-          '<span style="font-size:0.75rem;color:var(--c-text-muted);">.xlsx solamente</span>' +
-          '<input type="file" accept=".xlsx,.xls" id="rw-excel-file" style="display:none;" onchange="App._excelRouteUpload(this)">' +
+          '<span style="font-size:0.75rem;color:var(--c-text-muted);">.xlsx o .csv</span>' +
+          '<input type="file" accept=".xlsx,.xls,.csv" id="rw-excel-file" style="display:none;" onchange="App._excelRouteUpload(this)">' +
         '</label>' +
         '<div style="display:flex;gap:8px;margin-top:14px;">' +
           '<label style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:10px;cursor:pointer;">' +
@@ -2299,24 +2300,25 @@ var CMD_HANDLERS = {
       '<div class="glass-card" style="padding:20px;margin-bottom:12px;">' +
         '<div style="text-align:center;margin-bottom:16px;">' +
           '<div style="font-size:3rem;margin-bottom:8px;">📥</div>' +
-          '<h3 style="font-weight:700;margin-bottom:6px;">Importar Clientes desde Excel</h3>' +
-          '<p style="color:var(--c-text-muted);font-size:0.8rem;">Carga tu base de clientes de una vez. El sistema detectará las columnas automáticamente.</p>' +
+          '<h3 style="font-weight:700;margin-bottom:6px;">Importar Clientes</h3>' +
+          '<p style="color:var(--c-text-muted);font-size:0.8rem;">Carga tu base de clientes desde un archivo Excel o CSV. El sistema detectará las columnas automáticamente.</p>' +
         '</div>' +
         '<div class="glass-card" style="padding:14px;margin-bottom:16px;background:var(--c-bg-input);border:1px dashed var(--c-border);">' +
           '<p style="font-size:0.8rem;color:var(--c-text-muted);margin-bottom:8px;"><b>📌 Columnas soportadas:</b></p>' +
           '<p style="font-size:0.8rem;color:var(--c-text-secondary);line-height:1.6;margin:0;">' +
             '• <b>Nombre</b> (obligatorio) — Cliente, Negocio<br>' +
-            '• <b>Teléfono</b> — Celular, WhatsApp<br>' +
+            '• <b>Teléfono</b> — Celular, WhatsApp, Móvil<br>' +
             '• <b>Dirección</b> — Domicilio, Ubicación<br>' +
-            '• <b>Tipo</b> — Categoría, Tipo de negocio<br>' +
+            '• <b>Zona</b> — Sector, Barrio, Localidad<br>' +
+            '• <b>Tipo</b> — Categoría, Giro<br>' +
             '• <b>Día</b> — Día de visita' +
           '</p>' +
         '</div>' +
         '<label style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px;border:2px dashed var(--c-accent);border-radius:12px;cursor:pointer;transition:opacity 0.2s;">' +
           '<span style="font-size:1.5rem;">📁</span>' +
           '<span style="font-size:0.85rem;color:var(--c-accent);font-weight:600;">Toca para seleccionar archivo</span>' +
-          '<span style="font-size:0.75rem;color:var(--c-text-muted);">.xlsx solamente</span>' +
-          '<input type="file" accept=".xlsx,.xls" style="display:none;" onchange="App._excelClientUpload(this)">' +
+          '<span style="font-size:0.75rem;color:var(--c-text-muted);">.xlsx o .csv</span>' +
+          '<input type="file" accept=".xlsx,.xls,.csv" style="display:none;" onchange="App._excelClientUpload(this)">' +
         '</label>' +
       '</div>'
     );
