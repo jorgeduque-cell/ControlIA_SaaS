@@ -1,42 +1,45 @@
 # -*- coding: utf-8 -*-
 """
-ControlIA SaaS — Logistics & Routing Handler
+ControlIA SaaS — Logistics & Routing Handler (V2)
 Commands: /ruta_pie, /ruta_camion, /ruta_semanal, /inventario
 
-V2 CHANGES:
-  - PRODUCT_CATALOG → dynamic from DB
-  - TARGET_BUSINESS_TYPES → generic SaaS search types
-  - TRANSMILENIO_STATIONS / COMPANY_ADDRESS → removed (SaaS-generic)
-  - is_admin() → @requiere_suscripcion(bot)
-  - All queries scoped to vendedor_id
+V2 CHANGES (Zero-Cost Architecture):
+  - Google Places API → Overpass API (OSM, free)
+  - Google Geocoding → Nominatim (OSM, free)
+  - Nearest-neighbor sort → OR-Tools TSP (optimal, free)
+  - No K-Means clustering → Scikit-Learn K-Means (free)
+  - ORS time matrix for real street-level routing
+  - /ruta_pie now accepts Telegram location (📎 clip)
 """
 from telebot import types
 from datetime import date
 import datetime as dt_mod
 
 from config import (
-    GOOGLE_API_KEY, SEARCH_RADIUS_OPTIONS, DEFAULT_SEARCH_RADIUS,
-    MINUTES_PER_STOP, MAX_DISCOVERY_STOPS,
+    ORS_API_KEY, SEARCH_RADIUS_OPTIONS, DEFAULT_SEARCH_RADIUS,
+    MINUTES_PER_STOP, MAX_DISCOVERY_STOPS, KMEANS_THRESHOLD,
 )
 from database import get_connection, get_products, safe_parse_date
 from middleware import requiere_suscripcion, requiere_suscripcion_callback
-from utils import (
-    get_vendedor_id, format_cop, geocode_address, search_nearby_places,
-    haversine_distance, build_google_maps_links, build_walking_route,
+from utils import get_vendedor_id, format_cop, haversine_distance
+from routing_engine import (
+    geocode_nominatim, build_optimized_route,
+    search_overpass_businesses, filter_chains,
+    OSM_BUSINESS_TAGS,
 )
 
 WEEKDAYS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 WEEKDAY_EMOJIS = {"Lunes": "1️⃣", "Martes": "2️⃣", "Miércoles": "3️⃣", "Jueves": "4️⃣", "Viernes": "5️⃣", "Sábado": "6️⃣"}
 DAY_INDEX_MAP = {"Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles", "Thursday": "Jueves", "Friday": "Viernes", "Saturday": "Sábado"}
 
-# Generic business types for Google Places prospecting (SaaS — not tied to any industry)
-GENERIC_SEARCH_TYPES = {
-    "tienda": {"emoji": "🏪", "label": "Tiendas / Minimercados", "keywords": ["tienda", "minimercado", "supermercado"]},
-    "restaurante": {"emoji": "🍽️", "label": "Restaurantes", "keywords": ["restaurante", "comida", "asadero"]},
-    "farmacia": {"emoji": "🏥", "label": "Farmacias / Droguerías", "keywords": ["farmacia", "droguería"]},
-    "panaderia": {"emoji": "🥖", "label": "Panaderías", "keywords": ["panadería", "bakery"]},
-    "ferreteria": {"emoji": "🔧", "label": "Ferreterías", "keywords": ["ferretería", "ferretera"]},
-    "empresa": {"emoji": "🏢", "label": "Empresas / Oficinas", "keywords": ["empresa", "oficina"]},
+# Business type selector for /ruta_pie prospecting (OSM-based)
+BUSINESS_TYPE_OPTIONS = {
+    "tienda": {"emoji": "🏪", "label": "Tiendas / Minimercados"},
+    "restaurante": {"emoji": "🍽️", "label": "Restaurantes"},
+    "farmacia": {"emoji": "🏥", "label": "Farmacias / Droguerías"},
+    "panaderia": {"emoji": "🥖", "label": "Panaderías"},
+    "ferreteria": {"emoji": "🔧", "label": "Ferreterías"},
+    "empresa": {"emoji": "🏢", "label": "Empresas / Oficinas"},
 }
 
 
@@ -208,62 +211,72 @@ def register(bot):
             bot.send_message(message.chat.id, f"⚠️ Error: {e}")
 
     # =====================================================================
-    # /ruta_pie — Walking prospecting (Google Places)
+    # /ruta_pie — Walking prospecting (V2: Overpass + OR-Tools)
     # =====================================================================
 
     @bot.message_handler(commands=["ruta_pie"])
     @requiere_suscripcion(bot)
     def cmd_route_walking(message):
-        if not GOOGLE_API_KEY:
-            bot.send_message(message.chat.id, "❌ <b>GOOGLE_API_KEY no configurada.</b>")
+        if not ORS_API_KEY:
+            bot.send_message(message.chat.id, "❌ <b>ORS_API_KEY no configurada.</b>\nContacta soporte.")
             return
         bot.send_message(
             message.chat.id,
-            "📱 <b>RADAR DE PROSPECCIÓN</b>\n\n"
-            "🔍 Escanea Google Maps para negocios reales.\n\n"
-            "📍 Escribe tu <b>punto de partida</b>\n(Ej: Calle 170, Bogota):",
+            "📱 <b>RADAR DE PROSPECCIÓN V2</b>\n\n"
+            "🔍 Escanea OpenStreetMap para negocios reales.\n"
+            "💰 <b>Costo: $0</b> (100% gratis)\n\n"
+            "📍 Envía tu <b>ubicación actual</b> con el clip 📎\n"
+            "   o escribe tu punto de partida:",
         )
-        bot.register_next_step_handler(message, _step_disc_origin, bot, get_vendedor_id(message))
+        bot.register_next_step_handler(message, _step_disc_origin_v2, bot, get_vendedor_id(message))
 
-    def _step_disc_origin(message, bot, vendedor_id):
+    def _step_disc_origin_v2(message, bot, vendedor_id):
         try:
-            route_data = {"origin_text": (message.text or "").strip()}
-            bot.send_message(message.chat.id, "🔍 Geocodificando...")
-            lat, lng = geocode_address(route_data["origin_text"])
-            if lat is None:
-                bot.send_message(message.chat.id, "❌ No encontré esa dirección.")
-                return
-            route_data["lat"] = lat
-            route_data["lng"] = lng
+            route_data = {}
+
+            # Accept Telegram location (📎 clip) or text address
+            if message.content_type == "location":
+                route_data["lat"] = message.location.latitude
+                route_data["lng"] = message.location.longitude
+                route_data["origin_text"] = f"{route_data['lat']:.4f}, {route_data['lng']:.4f}"
+            else:
+                route_data["origin_text"] = (message.text or "").strip()
+                bot.send_message(message.chat.id, "🔍 Geocodificando con Nominatim (gratis)...")
+                lat, lng = geocode_nominatim(route_data["origin_text"])
+                if lat is None:
+                    bot.send_message(message.chat.id, "❌ No encontré esa dirección. Intenta ser más específico.")
+                    return
+                route_data["lat"] = lat
+                route_data["lng"] = lng
 
             markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
             markup.add("🎯 Todos los Tipos")
-            for key, info in GENERIC_SEARCH_TYPES.items():
+            for key, info in BUSINESS_TYPE_OPTIONS.items():
                 markup.add(f"{info['emoji']} {info['label']}")
 
             bot.send_message(
                 message.chat.id,
-                f"✅ Ubicación: {lat:.4f}, {lng:.4f}\n\n🎯 <b>¿Qué tipo de negocio buscas?</b>",
+                f"✅ Ubicación: {route_data['lat']:.4f}, {route_data['lng']:.4f}\n\n🎯 <b>¿Qué tipo de negocio buscas?</b>",
                 reply_markup=markup,
             )
-            bot.register_next_step_handler(message, _step_disc_target, bot, vendedor_id, route_data)
+            bot.register_next_step_handler(message, _step_disc_target_v2, bot, vendedor_id, route_data)
         except Exception as e:
             bot.send_message(message.chat.id, f"⚠️ Error: {e}")
 
-    def _step_disc_target(message, bot, vendedor_id, route_data):
+    def _step_disc_target_v2(message, bot, vendedor_id, route_data):
         try:
             selected = (message.text or "").strip()
             if "Todos" in selected:
-                route_data["target_keys"] = list(GENERIC_SEARCH_TYPES.keys())
+                route_data["target_keys"] = list(BUSINESS_TYPE_OPTIONS.keys())
                 route_data["target_label"] = "Todos los Tipos"
             else:
-                for key, info in GENERIC_SEARCH_TYPES.items():
+                for key, info in BUSINESS_TYPE_OPTIONS.items():
                     if info["label"] in selected:
                         route_data["target_keys"] = [key]
                         route_data["target_label"] = info["label"]
                         break
                 else:
-                    route_data["target_keys"] = list(GENERIC_SEARCH_TYPES.keys())
+                    route_data["target_keys"] = list(BUSINESS_TYPE_OPTIONS.keys())
                     route_data["target_label"] = "Todos"
 
             markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
@@ -271,90 +284,155 @@ def register(bot):
                 markup.add(label)
 
             bot.send_message(message.chat.id, "📍 <b>¿Qué radio de búsqueda?</b>", reply_markup=markup)
-            bot.register_next_step_handler(message, _step_disc_radius, bot, vendedor_id, route_data)
+            bot.register_next_step_handler(message, _step_disc_radius_v2, bot, vendedor_id, route_data)
         except Exception as e:
             bot.send_message(message.chat.id, f"⚠️ Error: {e}")
 
-    def _step_disc_radius(message, bot, vendedor_id, route_data):
+    def _step_disc_radius_v2(message, bot, vendedor_id, route_data):
         try:
             selected = (message.text or "").strip()
             route_data["radius"] = SEARCH_RADIUS_OPTIONS.get(selected, DEFAULT_SEARCH_RADIUS)
 
             bot.send_message(
                 message.chat.id,
-                "📍 Escribe la <b>dirección de destino final</b>\n(Donde terminas tu jornada):",
+                "📍 Escribe la <b>dirección de destino final</b>\n(Donde terminas tu jornada):\n\n"
+                "O escribe <b>mismo</b> para volver al punto de partida.",
                 reply_markup=types.ReplyKeyboardRemove(),
             )
-            bot.register_next_step_handler(message, _step_disc_dest, bot, vendedor_id, route_data)
+            bot.register_next_step_handler(message, _step_disc_dest_v2, bot, vendedor_id, route_data)
         except Exception as e:
             bot.send_message(message.chat.id, f"⚠️ Error: {e}")
 
-    def _step_disc_dest(message, bot, vendedor_id, route_data):
+    def _step_disc_dest_v2(message, bot, vendedor_id, route_data):
         try:
-            route_data["destination"] = (message.text or "").strip()
-            route_data["dest_label"] = route_data["destination"]
-            _execute_discovery(bot, message, route_data)
+            dest_text = (message.text or "").strip()
+            if dest_text.lower() in ("mismo", "misma", "volver", "regreso"):
+                route_data["dest_lat"] = route_data["lat"]
+                route_data["dest_lng"] = route_data["lng"]
+                route_data["dest_label"] = "Regreso al inicio"
+            else:
+                route_data["dest_label"] = dest_text
+                # We'll use the text for the Maps URL, no need to geocode
+                route_data["dest_lat"] = None
+                route_data["dest_lng"] = None
+
+            _execute_discovery_v2(bot, message, route_data)
         except Exception as e:
             bot.send_message(message.chat.id, f"⚠️ Error: {e}")
 
     # =====================================================================
-    # /ruta_camion — Delivery route
+    # /ruta_camion — Delivery route (V2: ORS + OR-Tools + K-Means)
     # =====================================================================
 
     @bot.message_handler(commands=["ruta_camion"])
     @requiere_suscripcion(bot)
     def cmd_route_truck(message):
         try:
+            if not ORS_API_KEY:
+                bot.send_message(message.chat.id, "❌ <b>ORS_API_KEY no configurada.</b>")
+                return
+
             vendedor_id = get_vendedor_id(message)
             conn = get_connection(vendedor_id)
             try:
                 pending = conn.execute("""
-                    SELECT c.nombre, c.direccion FROM pedidos p
+                    SELECT c.id, c.nombre, c.direccion, c.latitud, c.longitud
+                    FROM pedidos p
                     JOIN clientes c ON p.cliente_id = c.id
-                    WHERE p.vendedor_id = %s AND p.estado = 'Pendiente' AND c.direccion IS NOT NULL
-                    GROUP BY c.id
+                    WHERE p.vendedor_id = %s AND p.estado = 'Pendiente'
+                      AND c.latitud IS NOT NULL AND c.longitud IS NOT NULL
+                    GROUP BY c.id, c.nombre, c.direccion, c.latitud, c.longitud
                 """, (vendedor_id,)).fetchall()
             finally:
                 conn.close()
 
             if not pending:
-                bot.send_message(message.chat.id, "🚚 No hay pedidos pendientes con dirección.")
+                bot.send_message(
+                    message.chat.id,
+                    "🚚 No hay pedidos pendientes con coordenadas.\n\n"
+                    "💡 Asegúrate de que tus clientes tengan <b>latitud/longitud</b> registrada.",
+                )
                 return
 
             bot.send_message(
                 message.chat.id,
-                f"🚚 <b>RUTA DE ENTREGAS</b>\n\n"
-                f"📦 <b>{len(pending)}</b> clientes con pedidos pendientes.\n\n"
-                "📍 Escribe el <b>punto de partida</b>:",
+                f"🚚 <b>RUTA DE ENTREGAS V2</b>\n\n"
+                f"📦 <b>{len(pending)}</b> clientes con pedidos pendientes.\n"
+                f"🧠 Motor: ORS + OR-Tools (optimización real)\n"
+                f"💰 Costo: <b>$0</b>\n\n"
+                "📍 Escribe el <b>punto de partida</b>\n"
+                "   o envía tu ubicación con el clip 📎:",
             )
-            bot.register_next_step_handler(message, _step_truck_origin, bot, vendedor_id, pending)
+            bot.register_next_step_handler(message, _step_truck_origin_v2, bot, vendedor_id, pending)
         except Exception as e:
             bot.send_message(message.chat.id, f"⚠️ Error: {e}")
 
-    def _step_truck_origin(message, bot, vendedor_id, pending):
+    def _step_truck_origin_v2(message, bot, vendedor_id, pending):
         try:
-            origin = (message.text or "").strip()
-            addresses = [row["direccion"] for row in pending if row["direccion"]]
-            if not addresses:
-                bot.send_message(message.chat.id, "❌ No hay direcciones válidas.")
-                return
-            links = build_google_maps_links(origin, addresses[:-1], addresses[-1], "driving")
+            # Get origin coordinates
+            if message.content_type == "location":
+                origin_lat = message.location.latitude
+                origin_lng = message.location.longitude
+                origin_label = f"{origin_lat:.4f}, {origin_lng:.4f}"
+            else:
+                origin_label = (message.text or "").strip()
+                bot.send_message(message.chat.id, "🔍 Geocodificando origen...")
+                origin_lat, origin_lng = geocode_nominatim(origin_label)
+                if origin_lat is None:
+                    bot.send_message(message.chat.id, "❌ No encontré esa dirección.")
+                    return
 
-            response = f"🚚 <b>RUTA DE ENTREGAS</b>\n📍 Origen: {origin}\n" + "━" * 28 + "\n\n"
-            response += "📦 <b>Entregas:</b>\n"
-            for i, row in enumerate(pending, 1):
-                response += f"  {i}. {row['nombre']} — {row['direccion']}\n"
-            response += "\n"
-            for label, url in links:
-                response += f"🗺️ <a href='{url}'>{label}</a>\n"
-            response += f"\n📌 Total: {len(addresses)} entregas"
+            bot.send_message(message.chat.id, "🧠 Calculando ruta óptima con OR-Tools...")
+
+            # Build stops list for the routing engine
+            stops = []
+            for row in pending:
+                stops.append({
+                    "lat": row["latitud"],
+                    "lng": row["longitud"],
+                    "name": row["nombre"],
+                    "address": row["direccion"] or "Sin dirección",
+                })
+
+            # Run the full pipeline: Cluster → ORS → OR-Tools → URLs
+            clusters = build_optimized_route(
+                origin_coords=(origin_lat, origin_lng),
+                stops=stops,
+                profile="driving-car",
+            )
+
+            if not clusters:
+                bot.send_message(message.chat.id, "⚠️ No se pudo calcular la ruta. Intenta de nuevo.")
+                return
+
+            # Build response
+            response = f"🚚 <b>RUTA DE ENTREGAS OPTIMIZADA</b>\n"
+            response += f"📍 Origen: {origin_label}\n"
+            response += "━" * 30 + "\n\n"
+
+            if len(clusters) > 1:
+                response += f"📊 <b>{len(pending)} entregas</b> divididas en <b>{len(clusters)} zonas</b> (K-Means)\n\n"
+
+            for cluster in clusters:
+                response += f"🗺️ <b>{cluster['label']}</b> — {cluster['total_stops']} paradas | ⏱️ ~{cluster['total_time_min']} min\n"
+                for i, stop in enumerate(cluster["stops"], 1):
+                    response += f"  {i}. {stop['name']} — {stop.get('address', '')}\n"
+                response += "\n"
 
             bot.send_message(message.chat.id, response, disable_web_page_preview=True)
+
+            # Send inline buttons for each cluster
+            for cluster in clusters:
+                markup = types.InlineKeyboardMarkup()
+                label = f"🗺️ Abrir {cluster['label']} ({cluster['total_stops']} paradas)"
+                markup.add(types.InlineKeyboardButton(label, url=cluster["google_maps_url"]))
+                bot.send_message(message.chat.id, f"📲 <b>{cluster['label']}</b>", reply_markup=markup)
+
         except Exception as e:
             bot.send_message(message.chat.id, f"⚠️ Error: {e}")
 
     # =====================================================================
-    # /ruta_semanal — Weekly fixed routes
+    # /ruta_semanal — Weekly fixed routes (V2: ORS + OR-Tools)
     # =====================================================================
 
     @bot.message_handler(commands=["ruta_semanal"])
@@ -391,7 +469,7 @@ def register(bot):
 
             bot.send_message(
                 message.chat.id,
-                f"📅 <b>RUTAS SEMANALES</b>\n{'━'*30}\n\n{summary}\n¿Qué día ver?",
+                f"📅 <b>RUTAS SEMANALES V2</b>\n{'━'*30}\n\n{summary}\n¿Qué día ver?",
                 reply_markup=markup,
             )
         except Exception as e:
@@ -424,174 +502,204 @@ def register(bot):
                 )
                 return
 
-            # Nearest-neighbor sort
-            ordered = []
-            remaining = list(clients)
-            current_lat = remaining[0]["latitud"]
-            current_lng = remaining[0]["longitud"]
-
-            while remaining:
-                best_idx = 0
-                best_dist = haversine_distance(current_lat, current_lng, remaining[0]["latitud"], remaining[0]["longitud"])
-                for i in range(1, len(remaining)):
-                    d = haversine_distance(current_lat, current_lng, remaining[i]["latitud"], remaining[i]["longitud"])
-                    if d < best_dist:
-                        best_dist = d
-                        best_idx = i
-                c = remaining.pop(best_idx)
-                ordered.append({"client": c, "walk_distance": best_dist})
-                current_lat, current_lng = c["latitud"], c["longitud"]
-
-            total_walk = sum(item["walk_distance"] for item in ordered) / 1000
-            stop_coords = [(item["client"]["latitud"], item["client"]["longitud"]) for item in ordered]
-
-            first_addr = ordered[0]["client"]["direccion"] or f"{ordered[0]['client']['latitud']},{ordered[0]['client']['longitud']}"
-            last_addr = ordered[-1]["client"]["direccion"] or f"{ordered[-1]['client']['latitud']},{ordered[-1]['client']['longitud']}"
-            links = build_walking_route(first_addr, stop_coords, last_addr)
-
-            response = f"📅 <b>RUTA DEL {chosen_day.upper()}</b>\n"
-            response += "━" * 30 + "\n\n"
-            response += f"👥 <b>{len(ordered)}</b> clientes | 🚶 ~{total_walk:.1f} km\n\n"
-
-            for i, item in enumerate(ordered, 1):
-                c = item["client"]
-                walk = item["walk_distance"]
-                walk_label = f"{walk:.0f}m" if walk < 1000 else f"{walk/1000:.1f}km"
-
-                if i > 1:
-                    response += f"     ↓ 🚶 {walk_label}\n"
-                response += f"📍 <b>{i}. {c['nombre']}</b>\n"
-                response += f"     {c.get('direccion') or 'Sin dirección'}\n"
-                response += f"     📱 {c.get('telefono') or 'Sin tel.'} | 🏪 {c.get('tipo_negocio') or ''}\n"
-                if i < len(ordered):
-                    response += "     │\n"
-
-            response += "\n━" * 30 + "\n"
-            response += "📲 <b>ABRIR EN GOOGLE MAPS:</b>\n\n"
-            for label, url in links:
-                response += f"  <a href='{url}'>{label}</a>\n"
-
-            bot.send_message(chat_id, response, disable_web_page_preview=True)
+            # Build pedir origen prompt
+            bot.send_message(
+                chat_id,
+                f"📅 <b>RUTA DEL {chosen_day.upper()}</b>\n\n"
+                f"👥 <b>{len(clients)}</b> clientes encontrados.\n\n"
+                "📍 Envía tu <b>ubicación actual</b> con 📎\n"
+                "   o escribe tu punto de partida:",
+            )
+            bot.register_next_step_handler(call.message, _step_weekly_origin, bot, vendedor_id, chosen_day, clients)
         except Exception as e:
             bot.send_message(call.message.chat.id, f"⚠️ Error: {e}")
+
+    def _step_weekly_origin(message, bot, vendedor_id, chosen_day, clients):
+        try:
+            # Get origin coordinates
+            if message.content_type == "location":
+                origin_lat = message.location.latitude
+                origin_lng = message.location.longitude
+            else:
+                origin_text = (message.text or "").strip()
+                bot.send_message(message.chat.id, "🔍 Geocodificando...")
+                origin_lat, origin_lng = geocode_nominatim(origin_text)
+                if origin_lat is None:
+                    # Fallback: use first client's location as origin
+                    origin_lat = clients[0]["latitud"]
+                    origin_lng = clients[0]["longitud"]
+                    bot.send_message(message.chat.id, "⚠️ No encontré la dirección. Usando el primer cliente como origen.")
+
+            bot.send_message(message.chat.id, "🧠 Optimizando ruta con OR-Tools...")
+
+            # Build stops list
+            stops = []
+            for c in clients:
+                stops.append({
+                    "lat": c["latitud"],
+                    "lng": c["longitud"],
+                    "name": c["nombre"],
+                    "address": c.get("direccion") or "Sin dirección",
+                    "phone": c.get("telefono") or "Sin tel.",
+                    "tipo_negocio": c.get("tipo_negocio") or "",
+                })
+
+            # Run optimization with walking profile
+            clusters = build_optimized_route(
+                origin_coords=(origin_lat, origin_lng),
+                stops=stops,
+                profile="foot-walking",
+            )
+
+            if not clusters:
+                bot.send_message(message.chat.id, "⚠️ Error al calcular la ruta. Intenta de nuevo.")
+                return
+
+            # Build response (single cluster expected for weekly routes)
+            for cluster in clusters:
+                ordered = cluster["stops"]
+                total_time = cluster["total_time_min"]
+
+                response = f"📅 <b>RUTA DEL {chosen_day.upper()}</b> (Optimizada)\n"
+                response += "━" * 30 + "\n\n"
+                response += f"👥 <b>{len(ordered)}</b> clientes | ⏱️ ~{total_time} min caminando\n\n"
+
+                for i, stop in enumerate(ordered, 1):
+                    response += f"📍 <b>{i}. {stop['name']}</b>\n"
+                    response += f"     {stop.get('address', 'Sin dirección')}\n"
+                    response += f"     📱 {stop.get('phone', '')} | 🏪 {stop.get('tipo_negocio', '')}\n"
+                    if i < len(ordered):
+                        response += "     │\n     ↓ 🚶\n"
+
+                response += "\n" + "━" * 30 + "\n"
+
+                # Send message and button
+                bot.send_message(message.chat.id, response, disable_web_page_preview=True)
+
+                markup = types.InlineKeyboardMarkup()
+                markup.add(types.InlineKeyboardButton(
+                    f"🗺️ Abrir Ruta ({len(ordered)} paradas)",
+                    url=cluster["google_maps_url"],
+                ))
+                bot.send_message(message.chat.id, "📲 <b>ABRIR EN GOOGLE MAPS:</b>", reply_markup=markup)
+
+        except Exception as e:
+            bot.send_message(message.chat.id, f"⚠️ Error: {e}")
 
 
 # =========================================================================
 # HELPERS (module-level)
 # =========================================================================
 
-def _execute_discovery(bot, message, route_data):
-    """Search Google Places for real businesses and build a walking route."""
+def _execute_discovery_v2(bot, message, route_data):
+    """Search Overpass API for businesses and build optimized walking route."""
     try:
         bot.send_message(
             message.chat.id,
-            "🔍 <b>Escaneando...</b>\nBuscando negocios en Google Maps...",
+            "🔍 <b>Escaneando OpenStreetMap...</b>\n"
+            "🌍 Buscando negocios reales (gratis)...",
             reply_markup=types.ReplyKeyboardRemove(),
         )
 
         lat, lng, radius = route_data["lat"], route_data["lng"], route_data["radius"]
-        all_places = []
-        seen_ids = set()
 
-        for target_key in route_data["target_keys"]:
-            info = GENERIC_SEARCH_TYPES[target_key]
-            for keyword in info["keywords"]:
-                results = search_nearby_places(lat, lng, keyword, radius)
-                for place in results:
-                    pid = place.get("place_id", "")
-                    if pid in seen_ids:
-                        continue
-                    seen_ids.add(pid)
-                    name = place.get("name", "")
-                    ploc = place.get("geometry", {}).get("location", {})
-                    plat, plng = ploc.get("lat", 0), ploc.get("lng", 0)
-                    distance = haversine_distance(lat, lng, plat, plng)
-                    all_places.append({
-                        "name": name,
-                        "address": place.get("vicinity", ""),
-                        "lat": plat,
-                        "lng": plng,
-                        "distance_from_origin": distance,
-                        "rating": place.get("rating", 0),
-                        "total_ratings": place.get("user_ratings_total", 0),
-                        "open_now": place.get("opening_hours", {}).get("open_now", None),
-                        "emoji": info["emoji"],
-                    })
+        # Step 1: Search Overpass API
+        all_places = search_overpass_businesses(
+            lat, lng, radius,
+            business_types=route_data["target_keys"],
+        )
+
+        # Step 2: Anti-targeting filter
+        all_places = filter_chains(all_places)
 
         if not all_places:
             bot.send_message(
                 message.chat.id,
-                f"📍 No se encontraron negocios de tipo <b>{route_data['target_label']}</b> en {radius}m.",
+                f"📍 No se encontraron negocios de tipo <b>{route_data['target_label']}</b> en {radius}m.\n\n"
+                "💡 Intenta con un radio más grande o tipo 'Todos'.",
             )
             return
 
-        # Nearest-neighbor sort
-        candidates = list(all_places)
-        ordered_route = []
-        current_lat, current_lng = lat, lng
+        # Limit to MAX_DISCOVERY_STOPS
+        candidates = all_places[:MAX_DISCOVERY_STOPS]
 
-        while candidates and len(ordered_route) < MAX_DISCOVERY_STOPS:
-            best_idx = 0
-            best_dist = haversine_distance(current_lat, current_lng, candidates[0]["lat"], candidates[0]["lng"])
-            for i in range(1, len(candidates)):
-                d = haversine_distance(current_lat, current_lng, candidates[i]["lat"], candidates[i]["lng"])
-                if d < best_dist:
-                    best_dist = d
-                    best_idx = i
-            chosen = candidates.pop(best_idx)
-            chosen["walk_distance"] = best_dist
-            ordered_route.append(chosen)
-            current_lat, current_lng = chosen["lat"], chosen["lng"]
+        # Step 3: Build stops for routing engine
+        stops = []
+        for place in candidates:
+            stops.append({
+                "lat": place["lat"],
+                "lng": place["lng"],
+                "name": place["name"],
+                "address": place.get("address", ""),
+                "emoji": place.get("emoji", "🏪"),
+                "phone": place.get("phone", ""),
+                "opening_hours": place.get("opening_hours", ""),
+                "distance_from_origin": place.get("distance_from_origin", 0),
+            })
 
+        # Step 4: Optimize route with OR-Tools (walking)
+        clusters = build_optimized_route(
+            origin_coords=(lat, lng),
+            stops=stops,
+            profile="foot-walking",
+        )
+
+        if not clusters:
+            bot.send_message(message.chat.id, "⚠️ Error al optimizar la ruta.")
+            return
+
+        # Use first (and usually only) cluster
+        cluster = clusters[0]
+        ordered_route = cluster["stops"]
+        total_time = cluster["total_time_min"]
+
+        total_walk_km = sum(s.get("distance_from_origin", 0) for s in ordered_route) / 1000
         remaining = len(all_places) - len(ordered_route)
-        total_walk_m = sum(p["walk_distance"] for p in ordered_route)
-        total_walk_km = total_walk_m / 1000
-        total_time = len(ordered_route) * MINUTES_PER_STOP + int(total_walk_m / 80)
-        hours, mins = total_time // 60, total_time % 60
-
-        stop_coords = [(p["lat"], p["lng"]) for p in ordered_route]
-        links = build_walking_route(route_data["origin_text"], stop_coords, route_data["destination"])
 
         # Build output
-        response = "📱 <b>RADAR DE PROSPECCIÓN</b>\n"
+        response = "📱 <b>RADAR DE PROSPECCIÓN V2</b>\n"
         response += "━" * 34 + "\n\n"
         response += f"📍 <b>Zona:</b> {route_data['origin_text']}\n"
         response += f"🎯 <b>Target:</b> {route_data['target_label']}\n"
         response += f"📌 <b>Radio:</b> {radius}m\n"
         response += f"🔍 <b>Encontrados:</b> {len(all_places)} negocios\n"
         response += f"📊 <b>En ruta:</b> {len(ordered_route)} paradas\n"
-        response += f"🚶 <b>Distancia:</b> ~{total_walk_km:.1f} km\n"
-        response += f"⏱️ <b>Tiempo:</b> ~{hours}h {mins}min\n\n"
+        response += f"⏱️ <b>Tiempo est.:</b> ~{total_time} min\n"
+        response += f"💰 <b>Motor:</b> ORS + OR-Tools (gratis)\n\n"
 
-        response += "🗺️ <b>RECORRIDO:</b>\n" + "━" * 34 + "\n\n"
+        response += "🗺️ <b>RECORRIDO OPTIMIZADO:</b>\n" + "━" * 34 + "\n\n"
         response += f"🟢 <b>INICIO:</b> {route_data['origin_text']}\n     │\n"
 
         for i, place in enumerate(ordered_route, 1):
-            walk_label = f"{place['walk_distance']:.0f}m" if place["walk_distance"] < 1000 else f"{place['walk_distance']/1000:.1f}km"
-            open_icon = "🟢" if place["open_now"] else ("🔴" if place["open_now"] is False else "⚪")
+            dist = place.get("distance_from_origin", 0)
+            walk_label = f"{dist:.0f}m" if dist < 1000 else f"{dist/1000:.1f}km"
 
             response += f"     ↓ 🚶 {walk_label}\n"
-            response += f"📍 <b>{i}. {place['name']}</b> {place['emoji']}\n"
-            response += f"     {place['address']}\n"
-            response += f"     {open_icon}"
-            if place["rating"]:
-                response += f" ⭐ {place['rating']}"
-            if place["total_ratings"]:
-                response += f" ({place['total_ratings']} reseñas)"
-            response += "\n"
+            response += f"📍 <b>{i}. {place['name']}</b> {place.get('emoji', '')}\n"
+            if place.get("address"):
+                response += f"     {place['address']}\n"
+            if place.get("phone"):
+                response += f"     📱 {place['phone']}\n"
+            if place.get("opening_hours"):
+                response += f"     🕐 {place['opening_hours']}\n"
             if i < len(ordered_route):
                 response += "     │\n"
 
         response += "     │\n     ↓ 🚶\n"
         response += f"🔴 <b>FIN:</b> {route_data['dest_label']}\n\n"
 
-        response += "━" * 34 + "\n📲 <b>ABRIR EN GOOGLE MAPS:</b>\n\n"
-        for label, url in links:
-            response += f"  <a href='{url}'>{label}</a>\n"
-
         if remaining > 0:
-            response += f"\n⚠️ Hay <b>{remaining}</b> negocios más fuera de esta ruta."
+            response += f"⚠️ Hay <b>{remaining}</b> negocios más fuera de esta ruta.\n\n"
 
         bot.send_message(message.chat.id, response, disable_web_page_preview=True)
+
+        # Send Google Maps button
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton(
+            f"🗺️ Abrir Ruta Peatonal ({len(ordered_route)} paradas)",
+            url=cluster["google_maps_url"],
+        ))
+        bot.send_message(message.chat.id, "📲 <b>ABRIR EN GOOGLE MAPS:</b>", reply_markup=markup)
+
     except Exception as e:
         bot.send_message(message.chat.id, f"⚠️ Error en búsqueda: {e}")

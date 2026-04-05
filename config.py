@@ -24,6 +24,14 @@ DATABASE_URL = os.environ["DATABASE_URL"]  # Supabase NEW instance
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 
 # =========================================================================
+# V2 — ZERO-COST ROUTING ENGINE
+# =========================================================================
+ORS_API_KEY = os.environ.get("ORS_API_KEY", "")
+ORS_BASE_URL = "https://api.openrouteservice.org"
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+NOMINATIM_URL = "https://nominatim.openstreetmap.org"
+
+# =========================================================================
 # SAAS PRICING & TRIAL
 # =========================================================================
 SUBSCRIPTION_PRICE_COP = int(os.environ.get("SUBSCRIPTION_PRICE_COP", "80000"))
@@ -68,3 +76,16 @@ SEARCH_RADIUS_OPTIONS = {
     "🚶 2 km (caminata larga)": 2000,
     "🚶 3 km (máximo)": 3000,
 }
+
+# =========================================================================
+# V2 — CLUSTERING & ANTI-TARGETING
+# =========================================================================
+KMEANS_THRESHOLD = 10          # Trigger K-Means above this many stops
+DEFAULT_CLUSTER_SIZE = 8       # Target stops per cluster
+
+# Chains to exclude from /ruta_pie prospecting (Anti-Targeting)
+CHAIN_BLACKLIST = [
+    "kfc", "mcdonalds", "mcdonald's", "frisby", "subway", "dominos",
+    "domino's", "papa johns", "burger king", "starbucks", "juan valdez",
+    "oxxo", "d1", "ara", "justo & bueno", "éxito", "jumbo", "olimpica",
+]
