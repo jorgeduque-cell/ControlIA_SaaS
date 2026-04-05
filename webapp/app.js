@@ -1689,66 +1689,86 @@ var CMD_HANDLERS = {
   },
 
   ruta_pie: function() {
-    if (!navigator.geolocation) { showToast('Tu dispositivo no soporta GPS', 'error'); return; }
-    showToast('Obteniendo ubicacion...', 'info');
-    navigator.geolocation.getCurrentPosition(
-      function(pos) {
-        API.get('/api/clients').then(function(data) {
-          var clients = (data.items || []).filter(function(c) { return c.direccion; });
-          if (clients.length === 0) { showToast('No hay clientes con direccion', 'error'); return; }
-          var parts = clients.slice(0, 10).map(function(c) { return encodeURIComponent(c.direccion); });
-          var url = 'https://www.google.com/maps/dir/' + pos.coords.latitude + ',' + pos.coords.longitude + '/' + parts.join('/') + '/?dirflg=w';
-          window.open(url, '_blank');
-          showToast('Ruta a pie abierta en Google Maps', 'info');
-        });
-      },
-      function() { showToast('No se pudo obtener tu ubicacion', 'error'); },
-      { enableHighAccuracy: true, timeout: 15000 }
-    );
+    // V2: Delegate to Telegram bot (uses Overpass + ORS + OR-Tools)
+    App.showResult({
+      title: '🗺️ Radar de Prospección V2',
+      apiEndpoint: null,
+      render: function() { return ''; }
+    });
+    var content = document.getElementById('data-result-content');
+    if (content) {
+      content.innerHTML =
+        '<div class="glass-card" style="text-align:center;padding:24px;margin-bottom:16px;">' +
+          '<div style="font-size:3rem;margin-bottom:12px;">🗺️</div>' +
+          '<h3 style="font-weight:700;margin-bottom:8px;">Radar de Prospección V2</h3>' +
+          '<p style="color:var(--c-text-muted);font-size:0.85rem;margin-bottom:16px;">' +
+            'Este comando usa el motor inteligente con:<br>' +
+            '🌍 <b>Overpass API</b> — Busca negocios reales en OpenStreetMap<br>' +
+            '📐 <b>OpenRouteService</b> — Calcula tiempos reales caminando<br>' +
+            '🧠 <b>OR-Tools</b> — Optimiza el orden de visita<br>' +
+            '💰 <b>Costo total: $0</b>' +
+          '</p>' +
+          '<p style="color:var(--c-accent);font-weight:600;font-size:0.9rem;">Escribe /ruta_pie en el chat del bot para iniciar</p>' +
+        '</div>' +
+        '<div class="glass-card" style="padding:16px;">' +
+          '<p style="font-size:0.8rem;color:var(--c-text-muted);margin-bottom:8px;">📋 <b>Flujo:</b></p>' +
+          '<ol style="color:var(--c-text-secondary);font-size:0.8rem;padding-left:20px;margin:0;">' +
+            '<li>Envía tu ubicación con 📎 o escribe dirección</li>' +
+            '<li>Selecciona tipo de negocio (tiendas, farmacias, etc.)</li>' +
+            '<li>Elige radio de búsqueda</li>' +
+            '<li>Recibe ruta optimizada + botón Google Maps</li>' +
+          '</ol>' +
+        '</div>';
+    }
   },
 
   ruta_camion: function() {
-    if (!navigator.geolocation) { showToast('Tu dispositivo no soporta GPS', 'error'); return; }
-    showToast('Obteniendo ubicacion...', 'info');
-    navigator.geolocation.getCurrentPosition(
-      function(pos) {
-        API.get('/api/clients').then(function(data) {
-          var clients = (data.items || []).filter(function(c) { return c.direccion; });
-          if (clients.length === 0) { showToast('No hay clientes con direccion', 'error'); return; }
-          var parts = clients.slice(0, 10).map(function(c) { return encodeURIComponent(c.direccion); });
-          var url = 'https://www.google.com/maps/dir/' + pos.coords.latitude + ',' + pos.coords.longitude + '/' + parts.join('/');
-          window.open(url, '_blank');
-          showToast('Ruta en vehiculo abierta en Google Maps', 'info');
-        });
-      },
-      function() { showToast('No se pudo obtener tu ubicacion', 'error'); },
-      { enableHighAccuracy: true, timeout: 15000 }
-    );
+    // V2: Delegate to Telegram bot (uses ORS + OR-Tools + K-Means)
+    App.showResult({
+      title: '🚚 Ruta de Entregas V2',
+      apiEndpoint: null,
+      render: function() { return ''; }
+    });
+    var content = document.getElementById('data-result-content');
+    if (content) {
+      content.innerHTML =
+        '<div class="glass-card" style="text-align:center;padding:24px;margin-bottom:16px;">' +
+          '<div style="font-size:3rem;margin-bottom:12px;">🚚</div>' +
+          '<h3 style="font-weight:700;margin-bottom:8px;">Ruta de Entregas V2</h3>' +
+          '<p style="color:var(--c-text-muted);font-size:0.85rem;margin-bottom:16px;">' +
+            'Optimiza la entrega vehicular con:<br>' +
+            '📐 <b>ORS</b> — Tiempos reales respetando sentido de calles<br>' +
+            '🧠 <b>OR-Tools</b> — Orden óptimo de entrega (TSP)<br>' +
+            '📊 <b>K-Means</b> — Divide en zonas si hay +10 clientes<br>' +
+            '💰 <b>Costo total: $0</b>' +
+          '</p>' +
+          '<p style="color:var(--c-accent);font-weight:600;font-size:0.9rem;">Escribe /ruta_camion en el chat del bot</p>' +
+        '</div>';
+    }
   },
 
   ruta_semanal: function() {
-    App.showList({
-      title: '📅 Ruta Semanal',
-      subtitle: 'Clientes organizados por dia de visita',
-      apiEndpoint: '/api/clients',
-      emptyIcon: '📅',
-      emptyText: 'Asigna dias de visita a tus clientes primero',
-      renderItem: function(item) {
-        return {
-          icon: item.dia_visita ? '📅' : '⬜',
-          title: item.nombre,
-          subtitle: item.dia_visita || 'Sin dia asignado',
-          detail: item.direccion ? '📍' : ''
-        };
-      },
-      onItemClick: function(item) {
-        if (item.direccion) {
-          window.open('https://www.google.com/maps/search/' + encodeURIComponent(item.direccion), '_blank');
-        } else {
-          showToast('Cliente sin direccion registrada', 'info');
-        }
-      }
+    // V2: Delegate to Telegram bot (uses ORS + OR-Tools for walking)
+    App.showResult({
+      title: '📅 Ruta Semanal V2',
+      apiEndpoint: null,
+      render: function() { return ''; }
     });
+    var content = document.getElementById('data-result-content');
+    if (content) {
+      content.innerHTML =
+        '<div class="glass-card" style="text-align:center;padding:24px;margin-bottom:16px;">' +
+          '<div style="font-size:3rem;margin-bottom:12px;">📅</div>' +
+          '<h3 style="font-weight:700;margin-bottom:8px;">Ruta Semanal V2</h3>' +
+          '<p style="color:var(--c-text-muted);font-size:0.85rem;margin-bottom:16px;">' +
+            'Ruta peatonal optimizada por día de visita:<br>' +
+            '📐 <b>ORS</b> — Tiempos reales caminando<br>' +
+            '🧠 <b>OR-Tools</b> — Orden óptimo de visita<br>' +
+            '💰 <b>Costo total: $0</b>' +
+          '</p>' +
+          '<p style="color:var(--c-accent);font-weight:600;font-size:0.9rem;">Escribe /ruta_semanal en el chat del bot</p>' +
+        '</div>';
+    }
   },
 
   // ── Finanzas Extras ──
