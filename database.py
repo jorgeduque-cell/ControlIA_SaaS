@@ -599,11 +599,11 @@ def delete_client(client_id, vendedor_id):
 
 
 def search_clients(vendedor_id, query_text):
-    """Search clients by name (case-insensitive). Tenant-isolated."""
+    """Search clients by name (case-insensitive). Excludes soft-deleted. Tenant-isolated."""
     conn = get_connection(vendedor_id)
     try:
         return conn.execute(
-            "SELECT * FROM clientes WHERE vendedor_id = %s AND nombre ILIKE %s",
+            "SELECT * FROM clientes WHERE vendedor_id = %s AND estado != 'Eliminado' AND nombre ILIKE %s",
             (vendedor_id, f"%{query_text}%"),
         ).fetchall()
     finally:

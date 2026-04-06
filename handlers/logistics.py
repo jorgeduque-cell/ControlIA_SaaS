@@ -195,7 +195,7 @@ def register(bot):
             bot.send_message(message.chat.id, f"⚠️ Error: {e}")
 
     # =====================================================================
-    # /ruta_pie — Walking prospecting (V2: Overpass + OR-Tools)
+    # /ruta_pie — Walking prospecting (V3: Overpass + VROOM)
     # =====================================================================
 
     @bot.message_handler(commands=["ruta_pie"])
@@ -304,7 +304,7 @@ def register(bot):
             bot.send_message(message.chat.id, f"⚠️ Error: {e}")
 
     # =====================================================================
-    # /ruta_camion — Delivery route (V2: ORS + OR-Tools + K-Means)
+    # /ruta_camion — Delivery route (V3: VROOM + K-Means)
     # =====================================================================
 
     @bot.message_handler(commands=["ruta_camion"])
@@ -363,7 +363,7 @@ def register(bot):
                     bot.send_message(message.chat.id, "❌ No encontré esa dirección.")
                     return
 
-            bot.send_message(message.chat.id, "🧠 Calculando ruta óptima con OR-Tools...")
+            bot.send_message(message.chat.id, "🧠 Calculando ruta óptima...")
 
             # Build stops list for the routing engine
             stops = []
@@ -375,7 +375,7 @@ def register(bot):
                     "address": row["direccion"] or "Sin dirección",
                 })
 
-            # Run the full pipeline: Cluster → ORS → OR-Tools → URLs
+            # Run the full pipeline: Cluster → VROOM Optimization → URLs
             clusters = build_optimized_route(
                 origin_coords=(origin_lat, origin_lng),
                 stops=stops,
@@ -415,7 +415,7 @@ def register(bot):
             bot.send_message(message.chat.id, f"⚠️ Error: {e}")
 
     # =====================================================================
-    # /ruta_semanal — Weekly fixed routes (V2: ORS + OR-Tools)
+    # /ruta_semanal — Weekly fixed routes (V3: VROOM)
     # =====================================================================
 
     @bot.message_handler(commands=["ruta_semanal"])
@@ -513,7 +513,7 @@ def register(bot):
                     origin_lng = clients[0]["longitud"]
                     bot.send_message(message.chat.id, "⚠️ No encontré la dirección. Usando el primer cliente como origen.")
 
-            bot.send_message(message.chat.id, "🧠 Optimizando ruta con OR-Tools...")
+            bot.send_message(message.chat.id, "🧠 Optimizando ruta...")
 
             # Build stops list
             stops = []
@@ -622,7 +622,7 @@ def _execute_discovery_v2(bot, message, route_data):
                 "distance_from_origin": place.get("distance_from_origin", 0),
             })
 
-        # Step 4: Optimize route with OR-Tools (walking)
+        # Step 4: Optimize route with VROOM (walking)
         clusters = build_optimized_route(
             origin_coords=(lat, lng),
             stops=stops,

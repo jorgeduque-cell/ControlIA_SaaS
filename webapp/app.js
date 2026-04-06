@@ -2420,7 +2420,7 @@ var CMD_HANDLERS = {
       emptyText: 'No hay productos registrados',
       addBtn: { label: '+ Nuevo Producto', cmd: 'nuevo_producto' },
       renderItem: function(item) {
-        var stock = item.stock || 0;
+        var stock = item.stock_actual || item.stock || 0;
         return {
           icon: stock > 10 ? '🟢' : stock > 0 ? '🟡' : '🔴',
           title: item.nombre,
@@ -2652,7 +2652,7 @@ var CMD_HANDLERS = {
     // Load products and show selector
     API.get('/api/products')
       .then(function(res) {
-        var items = res.items || [];
+        var items = res.products || res.items || [];
         if (!items.length) {
           showToast('No tienes productos. Usa Configurar primero.', 'error');
           return;
