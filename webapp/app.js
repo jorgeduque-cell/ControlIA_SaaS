@@ -2632,7 +2632,7 @@ var CMD_HANDLERS = {
         '<div style="font-weight:700;font-size:1.1rem;margin-bottom:4px;">Meta por Producto</div>' +
         '<div style="color:var(--c-text-muted);font-size:0.8rem;">Objetivo en unidades por cada producto</div></div>';
     }
-    App._showView('data-result');
+    pushNav('data-result');
   },
 
   _metaSetSales: function() {
@@ -2669,7 +2669,7 @@ var CMD_HANDLERS = {
             '<span style="color:var(--c-text-muted);font-size:0.8rem;">Stock: ' + (p.stock_actual || 0) + '</span></div>';
         });
         if (content) content.innerHTML = html;
-        App._showView('data-result');
+        pushNav('data-result');
       })
       .catch(function(err) {
         showToast(err.message || 'Error cargando productos', 'error');
