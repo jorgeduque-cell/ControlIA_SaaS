@@ -146,7 +146,8 @@ def register(bot):
                     "👋 <b>¡Bienvenido a ControlIA!</b>\n\n"
                     "Tu asistente de ventas inteligente.\n"
                     f"🎁 <b>{TRIAL_DAYS} días de prueba gratis</b>\n\n"
-                    "Toca <b>📊 Abrir ControlIA</b> en el teclado ↓"
+                    "Toca <b>📊 Abrir ControlIA</b> en el teclado ↓\n\n"
+                    "💬 ¿Dudas? Escribe aquí tu mensaje y te responderemos."
                 )
             else:
                 fecha_venc = safe_parse_date(vendedor.get("fecha_vencimiento"))
@@ -163,7 +164,8 @@ def register(bot):
                     text = (
                         f"🏢 <b>{vendedor['nombre_negocio']}</b>\n"
                         f"{estado_emoji} {estado}\n\n"
-                        "Toca <b>📊 Abrir ControlIA</b> para abrir tu panel ↓"
+                        "Toca <b>📊 Abrir ControlIA</b> para abrir tu panel ↓\n\n"
+                        "💬 ¿Dudas o solicitudes? Escribe directamente aquí."
                     )
 
             bot.send_message(message.chat.id, text, reply_markup=markup)
