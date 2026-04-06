@@ -1785,10 +1785,12 @@ var CMD_HANDLERS = {
         var orderItems = [];
         var itemCounter = 0;
 
+        // Shared input style (prevents overflow)
+        var inputBase = 'padding:12px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:10px;color:var(--c-text);font-size:0.9rem;outline:none;box-sizing:border-box;width:100%;';
+
         // Client selector (searchable)
         var clientGroup = document.createElement('div');
-        clientGroup.className = 'input-group w-full';
-        clientGroup.style.marginBottom = '12px';
+        clientGroup.style.cssText = 'margin-bottom:12px;';
         var clientPicker = createClientPicker('order-client', clients, '🔍 Buscar cliente...');
         clientGroup.appendChild(clientPicker);
         container.appendChild(clientGroup);
@@ -1801,15 +1803,15 @@ var CMD_HANDLERS = {
         // Total display
         var totalDiv = document.createElement('div');
         totalDiv.id = 'order-total-display';
-        totalDiv.style.cssText = 'text-align:center;padding:12px;font-size:1.1rem;font-weight:700;color:var(--c-accent);margin:8px 0;';
-        totalDiv.textContent = 'Total: $0';
+        totalDiv.style.cssText = 'text-align:center;padding:16px 12px;font-size:1.3rem;font-weight:800;background:linear-gradient(135deg,rgba(108,60,225,0.1),rgba(0,212,255,0.1));border-radius:12px;border:1px solid var(--c-border);margin:8px 0;';
+        totalDiv.innerHTML = '<span style="color:var(--c-text-muted);font-size:0.8rem;display:block;">Total del pedido</span><span style="color:var(--c-accent);">$0</span>';
         container.appendChild(totalDiv);
 
         // Add item button
         var addBtn = document.createElement('button');
         addBtn.type = 'button';
         addBtn.className = 'btn btn--ghost w-full';
-        addBtn.style.marginBottom = '12px';
+        addBtn.style.marginBottom = '8px';
         addBtn.textContent = '＋ Agregar producto';
         addBtn.onclick = function() { addItemRow(); };
         container.appendChild(addBtn);
@@ -1819,39 +1821,44 @@ var CMD_HANDLERS = {
           orderItems.forEach(function(item) {
             var qtyEl = document.getElementById('item-qty-' + item.idx);
             var priceEl = document.getElementById('item-price-' + item.idx);
-            if (!qtyEl || !priceEl) return; // row was removed
+            if (!qtyEl || !priceEl) return;
             var qty = parseInt(qtyEl.value) || 0;
             var price = parseFloat(priceEl.value) || 0;
             total += qty * price;
           });
-          totalDiv.textContent = 'Total: ' + formatCOP(total);
+          totalDiv.innerHTML = '<span style="color:var(--c-text-muted);font-size:0.8rem;display:block;">Total del pedido</span><span style="color:var(--c-accent);">' + formatCOP(total) + '</span>';
         }
 
         function addItemRow() {
           var idx = itemCounter++;
           var row = document.createElement('div');
-          row.className = 'glass-card';
           row.id = 'item-row-' + idx;
-          row.style.cssText = 'padding:12px;margin-bottom:10px;position:relative;';
+          row.style.cssText = 'background:var(--c-bg-surface);border:1px solid var(--c-border);border-radius:12px;padding:12px;margin-bottom:10px;position:relative;';
 
           // Product select
-          var prodSelect = '<select id="item-prod-' + idx + '" style="appearance:auto;background:var(--c-bg-input);color:var(--c-text);border:1px solid var(--c-border);padding:10px 12px;border-radius:10px;width:100%;font-size:0.9rem;margin-bottom:8px;">';
-          prodSelect += '<option value="">📦 Producto</option>';
+          var prodHtml = '<select id="item-prod-' + idx + '" style="appearance:auto;' + inputBase + 'margin-bottom:8px;">';
+          prodHtml += '<option value="">📦 Seleccionar producto</option>';
           products.forEach(function(p) {
-            prodSelect += '<option value="' + p.nombre + '" data-pv="' + p.precio_venta + '" data-pc="' + p.precio_compra + '">' + p.nombre + ' — ' + formatCOP(p.precio_venta) + '</option>';
+            prodHtml += '<option value="' + p.nombre + '" data-pv="' + p.precio_venta + '" data-pc="' + p.precio_compra + '">' + p.nombre + ' — ' + formatCOP(p.precio_venta) + '</option>';
           });
-          prodSelect += '</select>';
+          prodHtml += '</select>';
 
-          row.innerHTML = prodSelect +
-            '<div style="display:flex;gap:8px;margin-bottom:8px;">' +
-              '<input type="number" id="item-qty-' + idx + '" placeholder="🔢 Cantidad" value="1" inputmode="numeric" style="flex:1;padding:10px 12px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:10px;color:var(--c-text);font-size:0.9rem;">' +
-              '<input type="number" id="item-price-' + idx + '" placeholder="💰 Precio" inputmode="numeric" step="any" style="flex:1;padding:10px 12px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:10px;color:var(--c-text);font-size:0.9rem;">' +
+          row.innerHTML = prodHtml +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px;">' +
+              '<div>' +
+                '<label style="font-size:0.7rem;color:var(--c-text-muted);margin-bottom:2px;display:block;">Cantidad</label>' +
+                '<input type="number" id="item-qty-' + idx + '" value="1" min="1" inputmode="numeric" style="' + inputBase + '">' +
+              '</div>' +
+              '<div>' +
+                '<label style="font-size:0.7rem;color:var(--c-text-muted);margin-bottom:2px;display:block;">Precio $</label>' +
+                '<input type="number" id="item-price-' + idx + '" placeholder="0" inputmode="numeric" step="any" style="' + inputBase + '">' +
+              '</div>' +
             '</div>' +
-            '<label style="display:flex;align-items:center;gap:6px;font-size:0.8rem;color:var(--c-text-muted);cursor:pointer;">' +
-              '<input type="checkbox" id="item-update-' + idx + '" style="width:16px;height:16px;">' +
-              ' Actualizar precio del producto' +
-            '</label>' +
-            '<button type="button" onclick="document.getElementById(\'item-row-' + idx + '\').remove();var i=window._orderItems.findIndex(function(x){return x.idx===' + idx + '});if(i>-1)window._orderItems.splice(i,1);window._updateOrderTotal();" style="position:absolute;top:8px;right:8px;background:none;border:none;color:#FF6B9D;font-size:1.2rem;cursor:pointer;">✕</button>';
+            '<button type="button" onclick="document.getElementById(\'item-row-' + idx + '\').remove();var i=window._orderItems.findIndex(function(x){return x.idx===' + idx + '});if(i>-1)window._orderItems.splice(i,1);window._updateOrderTotal();" style="position:absolute;top:8px;right:8px;background:rgba(255,107,157,0.15);border:none;color:#FF6B9D;width:28px;height:28px;border-radius:8px;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>' +
+            '<label style="display:flex;align-items:center;gap:6px;font-size:0.75rem;color:var(--c-text-muted);cursor:pointer;">' +
+              '<input type="checkbox" id="item-update-' + idx + '" style="width:14px;height:14px;accent-color:var(--c-accent);">' +
+              ' Actualizar precio base' +
+            '</label>';
 
           itemsDiv.appendChild(row);
           orderItems.push({ idx: idx });
