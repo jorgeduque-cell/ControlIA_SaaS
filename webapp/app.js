@@ -234,6 +234,67 @@ function popNav() {
 }
 
 
+// ─── CLIENT PICKER (Searchable dropdown) ───
+function createClientPicker(id, clients, placeholder) {
+  placeholder = placeholder || '🔍 Buscar cliente...';
+  var wrapper = document.createElement('div');
+  wrapper.style.cssText = 'position:relative;width:100%;';
+  var input = document.createElement('input');
+  input.type = 'text'; input.id = id; input.autocomplete = 'off';
+  input.placeholder = placeholder;
+  input.style.cssText = 'width:100%;padding:14px 16px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:12px;color:var(--c-text);font-size:0.95rem;outline:none;box-sizing:border-box;';
+  var dropdown = document.createElement('div');
+  dropdown.id = id + '-dd';
+  dropdown.style.cssText = 'display:none;position:absolute;top:100%;left:0;right:0;max-height:200px;overflow-y:auto;background:var(--c-bg-card);border:1px solid var(--c-border);border-radius:12px;margin-top:4px;z-index:999;box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+  var hiddenInput = document.createElement('input');
+  hiddenInput.type = 'hidden'; hiddenInput.id = id + '-value';
+  function renderOpts(filter) {
+    dropdown.innerHTML = '';
+    var matches = clients.filter(function(c) {
+      if (!filter) return true;
+      return c.nombre.toLowerCase().indexOf(filter.toLowerCase()) !== -1;
+    });
+    if (matches.length === 0) {
+      dropdown.innerHTML = '<div style="padding:12px 16px;color:var(--c-text-muted);font-size:0.85rem;">Sin resultados</div>';
+      dropdown.style.display = 'block'; return;
+    }
+    matches.slice(0, 20).forEach(function(c) {
+      var item = document.createElement('div');
+      item.style.cssText = 'padding:12px 16px;cursor:pointer;font-size:0.9rem;border-bottom:1px solid var(--c-border);';
+      item.innerHTML = '<b>👤 ' + c.nombre + '</b>' + (c.telefono ? '<span style="float:right;color:var(--c-text-muted);font-size:0.75rem;">📞 ' + c.telefono + '</span>' : '');
+      item.onmouseenter = function() { item.style.background = 'rgba(108,60,225,0.15)'; };
+      item.onmouseleave = function() { item.style.background = ''; };
+      item.onclick = function() {
+        input.value = c.nombre; hiddenInput.value = c.id;
+        dropdown.style.display = 'none';
+        input.style.borderColor = 'var(--c-accent)';
+        haptic('light');
+      };
+      dropdown.appendChild(item);
+    });
+    if (matches.length > 20) {
+      dropdown.innerHTML += '<div style="padding:10px 16px;color:var(--c-text-muted);font-size:0.75rem;text-align:center;">Escribe más letras (' + matches.length + ' resultados)</div>';
+    }
+    dropdown.style.display = 'block';
+  }
+  input.addEventListener('input', function() {
+    hiddenInput.value = ''; input.style.borderColor = '';
+    var q = input.value.trim();
+    if (q.length >= 2) renderOpts(q); else dropdown.style.display = 'none';
+  });
+  input.addEventListener('focus', function() {
+    var q = input.value.trim();
+    if (q.length >= 2) renderOpts(q); else if (clients.length <= 15) renderOpts('');
+  });
+  document.addEventListener('click', function(e) {
+    if (!wrapper.contains(e.target)) dropdown.style.display = 'none';
+  });
+  wrapper.appendChild(input); wrapper.appendChild(dropdown); wrapper.appendChild(hiddenInput);
+  wrapper._getValue = function() { return hiddenInput.value; };
+  wrapper._getLabel = function() { return input.value; };
+  return wrapper;
+}
+
 // ─── MAIN APP ───
 var App = {
   vendor: null,
@@ -701,7 +762,11 @@ var App = {
       group.className = 'input-group w-full';
       group.style.marginBottom = '12px';
 
-      if (field.type === 'select') {
+      if (field.type === 'client_search') {
+        var picker = createClientPicker('form-field-' + field.key, field.clients || [], '🔍 Buscar cliente...');
+        group.appendChild(picker);
+        group._pickerRef = picker;
+      } else if (field.type === 'select') {
         var select = document.createElement('select');
         select.id = 'form-field-' + field.key;
         select.style.cssText = 'appearance:auto;background:var(--c-bg-card);color:var(--c-text);border:1px solid var(--c-border);padding:14px 16px;border-radius:12px;width:100%;font-size:0.95rem;';
@@ -748,13 +813,27 @@ var App = {
         var hasError = false;
 
         fields.forEach(function(field) {
-          var el = document.getElementById('form-field-' + field.key);
-          var val = el ? el.value.trim() : '';
-          if (field.required && !val) {
-            hasError = true;
-            if (el) el.style.borderColor = '#FF6B9D';
-          } else if (el) {
-            el.style.borderColor = '';
+          var val;
+          if (field.type === 'client_search') {
+            var hiddenEl = document.getElementById('form-field-' + field.key + '-value');
+            var visibleEl = document.getElementById('form-field-' + field.key);
+            // If key contains 'nombre', use the display name; otherwise use the hidden ID
+            val = (field.key.indexOf('nombre') !== -1 && visibleEl) ? visibleEl.value.trim() : (hiddenEl ? hiddenEl.value.trim() : '');
+            if (field.required && !val) {
+              hasError = true;
+              if (visibleEl) visibleEl.style.borderColor = '#FF6B9D';
+            } else if (visibleEl) {
+              visibleEl.style.borderColor = '';
+            }
+          } else {
+            var el = document.getElementById('form-field-' + field.key);
+            val = el ? el.value.trim() : '';
+            if (field.required && !val) {
+              hasError = true;
+              if (el) el.style.borderColor = '#FF6B9D';
+            } else if (el) {
+              el.style.borderColor = '';
+            }
           }
           formData[field.key] = field.type === 'number' ? (parseFloat(val) || 0) : val;
         });
@@ -1706,22 +1785,12 @@ var CMD_HANDLERS = {
         var orderItems = [];
         var itemCounter = 0;
 
-        // Client selector
+        // Client selector (searchable)
         var clientGroup = document.createElement('div');
         clientGroup.className = 'input-group w-full';
         clientGroup.style.marginBottom = '12px';
-        var clientSelect = document.createElement('select');
-        clientSelect.id = 'order-client';
-        clientSelect.style.cssText = 'appearance:auto;background:var(--c-bg-card);color:var(--c-text);border:1px solid var(--c-border);padding:14px 16px;border-radius:12px;width:100%;font-size:0.95rem;';
-        var defaultOpt = document.createElement('option');
-        defaultOpt.value = ''; defaultOpt.textContent = '👤 Seleccionar cliente';
-        clientSelect.appendChild(defaultOpt);
-        clients.forEach(function(c) {
-          var o = document.createElement('option');
-          o.value = c.id; o.textContent = c.nombre;
-          clientSelect.appendChild(o);
-        });
-        clientGroup.appendChild(clientSelect);
+        var clientPicker = createClientPicker('order-client', clients, '🔍 Buscar cliente...');
+        clientGroup.appendChild(clientPicker);
         container.appendChild(clientGroup);
 
         // Items container
@@ -1811,7 +1880,7 @@ var CMD_HANDLERS = {
         // Submit handler
         if (submitBtn) {
           submitBtn.onclick = function() {
-            var clientId = clientSelect.value;
+            var clientId = clientPicker._getValue();
             if (!clientId) { haptic('error'); showToast('Selecciona un cliente', 'error'); return; }
 
             var items = [];
@@ -2115,7 +2184,7 @@ var CMD_HANDLERS = {
         title: '📝 Agregar Nota',
         subtitle: 'Nota de seguimiento para un cliente',
         fields: [
-          { key: 'cliente_id', label: 'Cliente', type: 'select', options: clients.map(function(c) { return { value: c.id, label: c.nombre }; }), required: true, icon: '👤' },
+          { key: 'cliente_id', label: 'Cliente', type: 'client_search', clients: clients, required: true },
           { key: 'texto', label: 'Nota / Observación', type: 'text', required: true, icon: '📝' }
         ],
         submitLabel: 'Guardar Nota',
@@ -2233,7 +2302,7 @@ var CMD_HANDLERS = {
         title: '📅 Asignar Día de Visita',
         subtitle: 'Programa el día de visita de un cliente',
         fields: [
-          { key: 'cliente_nombre', label: 'Cliente', type: 'select', options: clients.map(function(c) { return { value: c.nombre, label: c.nombre }; }), required: true, icon: '👤' },
+          { key: 'cliente_nombre', label: 'Cliente', type: 'client_search', clients: clients, required: true },
           { key: 'dia', label: 'Día', type: 'select', options: ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'], required: true, icon: '📅' }
         ],
         submitLabel: 'Asignar Día',

@@ -5,7 +5,7 @@ Registers all command handler modules with the bot instance.
 Order matters: onboarding registers /start and the callback router,
 so it must be loaded first.
 """
-from handlers import onboarding, crm, sales, logistics, documents, finance, admin
+from handlers import onboarding, crm, sales, logistics, documents, finance, admin, support
 
 
 def register_all(bot):
@@ -17,3 +17,4 @@ def register_all(bot):
     documents.register(bot)
     finance.register(bot)
     admin.register(bot)       # /backup, /editar, /eliminar
+    support.register(bot)     # Catch-all: support chat (MUST BE LAST)

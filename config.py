@@ -36,6 +36,7 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org"
 # =========================================================================
 SUBSCRIPTION_PRICE_COP = int(os.environ.get("SUBSCRIPTION_PRICE_COP", "80000"))
 TRIAL_DAYS = int(os.environ.get("TRIAL_DAYS", "3"))
+ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "")  # Owner's Telegram ID for support
 
 # =========================================================================
 # WEBAPP URL (Telegram Mini App)
