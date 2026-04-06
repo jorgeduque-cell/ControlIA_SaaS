@@ -1641,9 +1641,6 @@ class AppHandler(BaseHTTPRequestHandler):
             "external_reference": str(vendor_id),
             "statement_descriptor": "ControlIA SaaS",
             "auto_return": "approved",
-            "expires": True,
-            "expiration_date_from": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000-05:00"),
-            "expiration_date_to": (datetime.now(timezone.utc) + timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S.000-05:00"),
         }
 
         if notification_url:
