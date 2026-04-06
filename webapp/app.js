@@ -304,6 +304,28 @@ var App = {
       })
       .catch(function(err) {
         console.error('Init failed:', err);
+        // If 401, user opened outside Telegram — show clear message
+        if (err.message && err.message.indexOf('401') !== -1) {
+          var content = document.getElementById('data-result-content');
+          var title = document.getElementById('data-result-title');
+          if (title) title.textContent = '🔐 Acceso Restringido';
+          if (content) {
+            content.innerHTML =
+              '<div class="glass-card" style="text-align:center;padding:32px;">' +
+                '<div style="font-size:4rem;margin-bottom:16px;">🤖</div>' +
+                '<h3 style="font-weight:700;margin-bottom:12px;">Abre desde Telegram</h3>' +
+                '<p style="color:var(--c-text-muted);font-size:0.9rem;line-height:1.6;margin-bottom:20px;">' +
+                  'Esta aplicación funciona exclusivamente dentro de Telegram.<br>' +
+                  'Busca <b>@controliasaasbot</b> en Telegram y presiona el botón <b>📊 ControlIA</b> del menú.' +
+                '</p>' +
+                '<a href="https://t.me/controliasaasbot" class="btn btn--primary" style="text-decoration:none;display:inline-block;">' +
+                  '💬 Abrir en Telegram' +
+                '</a>' +
+              '</div>';
+          }
+          App.showScreen('data-result');
+          return;
+        }
         showToast('Error al conectar con el servidor', 'error');
         App.showScreen('welcome');
         typewriter(document.getElementById('typewriter-target'), 'Tu asistente de ventas inteligente', 50);
