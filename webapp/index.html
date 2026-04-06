@@ -339,10 +339,14 @@
         <div class="glass-card w-full" style="text-align:center;padding:24px;">
           <div class="expired__price" id="expired-price">$80.000</div>
           <div class="expired__price-period">/mes</div>
+          <p style="font-size:0.75rem;color:var(--c-text-muted);margin-top:8px;">
+            Tarjeta, PSE, Nequi o Efecty
+          </p>
         </div>
 
-        <button class="btn btn--accent w-full" onclick="App.sendCommand('start')">
-          💳 Renovar Suscripción
+        <button class="btn btn--accent w-full" onclick="App.openPayment()" id="btn-pay">
+          <span id="btn-pay-text">💳 Renovar Suscripción</span>
+          <div id="btn-pay-spinner" class="btn__spinner hidden"></div>
         </button>
 
         <p style="font-size:0.8rem;color:var(--c-text-muted);">
@@ -434,6 +438,6 @@
   <div class="confetti-container" id="confetti" aria-hidden="true"></div>
 
   <!-- App Logic -->
-  <script src="./app.js?v=29"></script>
+  <script src="./app.js?v=30"></script>
 </body>
 </html>

@@ -837,6 +837,40 @@ var App = {
       var el = document.getElementById('expired-date');
       if (el) el.textContent = formatDate(App.vendor.fecha_vencimiento);
     }
+  },
+
+  openPayment: function() {
+    var btn = document.getElementById('btn-pay');
+    var text = document.getElementById('btn-pay-text');
+    var spin = document.getElementById('btn-pay-spinner');
+    if (btn) btn.disabled = true;
+    if (text) text.classList.add('hidden');
+    if (spin) spin.classList.remove('hidden');
+
+    API.post('/api/payment/create', {})
+      .then(function(data) {
+        if (data.init_point) {
+          haptic('success');
+          showToast('💳 Redirigiendo a MercadoPago...', 'info');
+          // Open MercadoPago checkout
+          if (IS_TELEGRAM && tg.openLink) {
+            tg.openLink(data.init_point);
+          } else {
+            window.open(data.init_point, '_blank');
+          }
+        } else {
+          showToast('Error generando link de pago', 'error');
+        }
+      })
+      .catch(function(err) {
+        haptic('error');
+        showToast('Error: ' + (err.message || 'Intenta de nuevo'), 'error');
+      })
+      .finally(function() {
+        if (btn) btn.disabled = false;
+        if (text) text.classList.remove('hidden');
+        if (spin) spin.classList.add('hidden');
+      });
   }
 };
 

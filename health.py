@@ -20,9 +20,10 @@ import io
 import json
 import os
 import threading
+import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from config import TOKEN, TRIAL_DAYS, SUBSCRIPTION_PRICE_COP, MERCADOPAGO_WEBHOOK_SECRET, logger
@@ -288,6 +289,11 @@ class AppHandler(BaseHTTPRequestHandler):
         # Onboarding route — no subscription check
         if path == '/api/register':
             self._api_register(vendor_id, body)
+            return
+
+        # Payment route — no subscription check (expired users need this!)
+        if path == '/api/payment/create':
+            self._api_create_payment(vendor_id, body)
             return
 
         # All other routes require active subscription
@@ -1600,6 +1606,99 @@ class AppHandler(BaseHTTPRequestHandler):
                     logger.error("Error processing MercadoPago payment: %s", e)
 
         self._json_response({"status": "received"})
+
+    # ── MERCADO PAGO PAYMENT CREATION ──
+
+    def _api_create_payment(self, vendor_id, body):
+        """POST /api/payment/create — Generate MercadoPago Checkout preference.
+
+        Creates a one-click payment link for subscription renewal.
+        Supports ALL payment methods: cards, PSE, Nequi, Efecty.
+        The webhook handles activation on successful payment.
+        """
+        from config import MERCADOPAGO_ACCESS_TOKEN
+
+        if not MERCADOPAGO_ACCESS_TOKEN:
+            self._send_error(500, "Pagos no configurados. Contacta soporte.")
+            return
+
+        # Build notification URL from Render external URL
+        render_url = os.environ.get('RENDER_EXTERNAL_URL', '')
+        notification_url = f"{render_url}/webhook/mercadopago" if render_url else ''
+
+        # Build MercadoPago Checkout Pro preference
+        preference = {
+            "items": [{
+                "title": "ControlIA SaaS — Suscripción Mensual",
+                "description": "CRM + Rutas + Finanzas + Inventario para vendedores",
+                "quantity": 1,
+                "currency_id": "COP",
+                "unit_price": SUBSCRIPTION_PRICE_COP,
+            }],
+            "payer": {
+                "name": str(vendor_id),
+            },
+            "external_reference": str(vendor_id),
+            "statement_descriptor": "ControlIA SaaS",
+            "auto_return": "approved",
+            "expires": True,
+            "expiration_date_from": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000-05:00"),
+            "expiration_date_to": (datetime.now(timezone.utc) + timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S.000-05:00"),
+        }
+
+        if notification_url:
+            preference["notification_url"] = notification_url
+
+        # Back URLs (redirect user after payment)
+        webapp_url = os.environ.get('RENDER_EXTERNAL_URL', '')
+        if webapp_url:
+            preference["back_urls"] = {
+                "success": f"{webapp_url}/app/",
+                "failure": f"{webapp_url}/app/",
+                "pending": f"{webapp_url}/app/",
+            }
+
+        try:
+            # Create preference via MercadoPago API
+            req_data = json.dumps(preference).encode('utf-8')
+            req = urllib.request.Request(
+                "https://api.mercadopago.com/checkout/preferences",
+                data=req_data,
+                headers={
+                    "Authorization": f"Bearer {MERCADOPAGO_ACCESS_TOKEN}",
+                    "Content-Type": "application/json",
+                },
+            )
+
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                result = json.loads(resp.read())
+
+            init_point = result.get('init_point', '')
+            preference_id = result.get('id', '')
+
+            if not init_point:
+                logger.error("MercadoPago preference created but no init_point: %s", result)
+                self._send_error(500, "Error generando link de pago")
+                return
+
+            logger.info(
+                "PAYMENT LINK created for vendor %s — preference=%s, amount=$%s COP",
+                vendor_id, preference_id, SUBSCRIPTION_PRICE_COP,
+            )
+
+            self._json_response({
+                "init_point": init_point,
+                "preference_id": preference_id,
+                "amount": SUBSCRIPTION_PRICE_COP,
+            })
+
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode() if e.fp else ''
+            logger.error("MercadoPago API error %s: %s", e.code, error_body)
+            self._send_error(500, "Error con el procesador de pagos")
+        except Exception as e:
+            logger.error("Payment creation error: %s", e)
+            self._send_error(500, str(e))
 
     # ── WHATSAPP DEEP LINK API ──
 
