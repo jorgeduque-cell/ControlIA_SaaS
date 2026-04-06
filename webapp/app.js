@@ -2451,38 +2451,71 @@ var CMD_HANDLERS = {
   },
 
   ruta_camion: function() {
-    var titleEl = document.getElementById('data-result-title');
-    var content = document.getElementById('data-result-content');
-    if (titleEl) titleEl.textContent = '🚚 Ruta de Entregas';
-    if (content) {
-      content.innerHTML =
-        '<div class="glass-card" style="text-align:center;padding:24px;margin-bottom:16px;">' +
-          '<div style="font-size:3rem;margin-bottom:12px;">🚚</div>' +
-          '<h3 style="font-weight:700;margin-bottom:8px;">Ruta de Entregas</h3>' +
-          '<p style="color:var(--c-text-muted);font-size:0.85rem;margin-bottom:16px;">' +
-            'Calcula el orden óptimo para entregar todos tus pedidos pendientes en vehículo.' +
-          '</p>' +
-          '<p style="color:var(--c-accent);font-weight:600;font-size:0.95rem;">Escribe <code>/ruta_camion</code> en el chat del bot</p>' +
-        '</div>';
-    }
+    App._truckRoute = {};
+    var html =
+      '<div class="glass-card" style="padding:20px;margin-bottom:12px;">' +
+        '<div style="text-align:center;margin-bottom:16px;">' +
+          '<div style="font-size:2.5rem;margin-bottom:8px;">🚚</div>' +
+          '<h3 style="font-weight:700;margin-bottom:4px;">Ruta de Entregas</h3>' +
+          '<p style="color:var(--c-text-muted);font-size:0.8rem;">Optimiza tu recorrido de entregas pendientes</p>' +
+        '</div>' +
+        '<h4 style="font-weight:700;margin-bottom:12px;">📍 ¿Desde dónde sales?</h4>' +
+        '<button class="btn btn--primary w-full" onclick="App._trGPS()" id="tr-gps-btn" style="margin-bottom:16px;">' +
+          '<span id="tr-gps-text">📡 Usar mi ubicación actual</span>' +
+          '<div id="tr-gps-spinner" class="btn__spinner hidden"></div>' +
+        '</button>' +
+        '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">' +
+          '<div style="flex:1;height:1px;background:var(--c-border);"></div>' +
+          '<span style="color:var(--c-text-muted);font-size:0.8rem;">o escribe dirección</span>' +
+          '<div style="flex:1;height:1px;background:var(--c-border);"></div>' +
+        '</div>' +
+        '<input type="text" id="tr-address" placeholder="Ej: Bodega Calle 13 #50, Bogotá" ' +
+          'style="width:100%;padding:12px 14px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:10px;color:var(--c-text);font-size:0.9rem;outline:none;box-sizing:border-box;margin-bottom:10px;">' +
+        '<button class="btn btn--secondary w-full" onclick="App._trGeocode()" id="tr-geo-btn">' +
+          '<span id="tr-geo-text">🔍 Buscar dirección</span>' +
+          '<div id="tr-geo-spinner" class="btn__spinner hidden"></div>' +
+        '</button>' +
+      '</div>';
+
+    _rwRender('🚚 Ruta de Entregas', html);
     pushNav('data-result');
+
+    setTimeout(function() {
+      var inp = document.getElementById('tr-address');
+      if (inp) inp.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); App._trGeocode(); }
+      });
+    }, 100);
   },
 
   ruta_semanal: function() {
-    var titleEl = document.getElementById('data-result-title');
-    var content = document.getElementById('data-result-content');
-    if (titleEl) titleEl.textContent = '📅 Ruta Semanal';
-    if (content) {
-      content.innerHTML =
-        '<div class="glass-card" style="text-align:center;padding:24px;margin-bottom:16px;">' +
-          '<div style="font-size:3rem;margin-bottom:12px;">📅</div>' +
-          '<h3 style="font-weight:700;margin-bottom:8px;">Ruta Semanal</h3>' +
-          '<p style="color:var(--c-text-muted);font-size:0.85rem;margin-bottom:16px;">' +
-            'Genera la ruta peatonal optimizada para visitar tus clientes según el día asignado.' +
-          '</p>' +
-          '<p style="color:var(--c-accent);font-weight:600;font-size:0.95rem;">Escribe <code>/ruta_semanal</code> en el chat del bot</p>' +
-        '</div>';
-    }
+    App._weekRoute = {};
+    var days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+    var today = new Date();
+    var dayIdx = today.getDay();
+    var todayName = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][dayIdx];
+
+    var html =
+      '<div class="glass-card" style="padding:20px;margin-bottom:12px;">' +
+        '<div style="text-align:center;margin-bottom:16px;">' +
+          '<div style="font-size:2.5rem;margin-bottom:8px;">📅</div>' +
+          '<h3 style="font-weight:700;margin-bottom:4px;">Ruta Semanal</h3>' +
+          '<p style="color:var(--c-text-muted);font-size:0.8rem;">Genera ruta con los clientes asignados a cada día</p>' +
+        '</div>' +
+        '<h4 style="font-weight:700;margin-bottom:12px;">📆 ¿Qué día quieres visitar?</h4>';
+
+    days.forEach(function(day) {
+      var isToday = day === todayName;
+      var btnClass = isToday ? 'btn btn--primary' : 'btn btn--secondary';
+      var extra = isToday ? ' — HOY' : '';
+      html += '<button class="' + btnClass + ' w-full" style="margin-bottom:8px;" ' +
+        'onclick="App._wkPickDay(\'' + day + '\')">' +
+        '📅 ' + day + extra + '</button>';
+    });
+
+    html += '</div>';
+
+    _rwRender('📅 Ruta Semanal', html);
     pushNav('data-result');
   },
 
@@ -2763,6 +2796,319 @@ var CMD_HANDLERS = {
       })
       .catch(function() { showToast('Error al generar respaldo', 'error'); });
   }
+};
+
+
+// ─── TRUCK ROUTE HELPERS ───
+
+App._trGPS = function() {
+  var btn = document.getElementById('tr-gps-btn');
+  var text = document.getElementById('tr-gps-text');
+  var spin = document.getElementById('tr-gps-spinner');
+  if (btn) btn.disabled = true;
+  if (text) text.classList.add('hidden');
+  if (spin) spin.classList.remove('hidden');
+
+  if (!navigator.geolocation) {
+    showToast('Tu dispositivo no soporta GPS', 'error');
+    if (btn) btn.disabled = false; if (text) text.classList.remove('hidden'); if (spin) spin.classList.add('hidden');
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    function(pos) {
+      App._truckRoute.lat = pos.coords.latitude;
+      App._truckRoute.lng = pos.coords.longitude;
+      App._truckRoute.label = 'GPS: ' + pos.coords.latitude.toFixed(4) + ', ' + pos.coords.longitude.toFixed(4);
+      haptic('success');
+      App._trPickMode();
+    },
+    function() {
+      showToast('No se pudo obtener ubicación', 'error');
+      if (btn) btn.disabled = false; if (text) text.classList.remove('hidden'); if (spin) spin.classList.add('hidden');
+    },
+    { enableHighAccuracy: true, timeout: 15000 }
+  );
+};
+
+App._trGeocode = function() {
+  var inp = document.getElementById('tr-address');
+  var addr = inp ? inp.value.trim() : '';
+  if (!addr) { showToast('Escribe una dirección', 'error'); return; }
+
+  var btn = document.getElementById('tr-geo-btn');
+  var text = document.getElementById('tr-geo-text');
+  var spin = document.getElementById('tr-geo-spinner');
+  if (btn) btn.disabled = true;
+  if (text) text.classList.add('hidden');
+  if (spin) spin.classList.remove('hidden');
+
+  API.post('/api/geocode', { address: addr })
+    .then(function(data) {
+      if (!data.found) {
+        showToast('No se encontró. Intenta ser más específico.', 'error');
+        if (btn) btn.disabled = false; if (text) text.classList.remove('hidden'); if (spin) spin.classList.add('hidden');
+        return;
+      }
+      App._truckRoute.lat = data.lat;
+      App._truckRoute.lng = data.lng;
+      App._truckRoute.label = addr;
+      haptic('success');
+      App._trPickMode();
+    })
+    .catch(function() {
+      showToast('Error buscando dirección', 'error');
+      if (btn) btn.disabled = false; if (text) text.classList.remove('hidden'); if (spin) spin.classList.add('hidden');
+    });
+};
+
+App._trPickMode = function() {
+  var html =
+    '<div class="glass-card" style="padding:12px;margin-bottom:10px;">' +
+      '<p style="font-weight:600;font-size:0.85rem;">📍 Salida: <span style="color:var(--c-accent);">' + App._truckRoute.label + '</span></p>' +
+    '</div>' +
+    '<div class="glass-card" style="padding:20px;margin-bottom:12px;">' +
+      '<h4 style="font-weight:700;margin-bottom:12px;">🚚 ¿Qué clientes incluir?</h4>' +
+      '<button class="btn btn--primary w-full" style="margin-bottom:8px;" onclick="App._trExecute(true)">' +
+        '📦 Solo con pedidos pendientes' +
+      '</button>' +
+      '<p style="font-size:0.75rem;color:var(--c-text-muted);margin:0 0 16px 0;text-align:center;">Ruta solo para clientes que tienen pedidos sin entregar</p>' +
+      '<button class="btn btn--secondary w-full" style="margin-bottom:8px;" onclick="App._trPickRadius()">' +
+        '👥 Todos mis clientes cercanos' +
+      '</button>' +
+      '<p style="font-size:0.75rem;color:var(--c-text-muted);margin:0;text-align:center;">Elige un radio y visita todos los clientes en esa zona</p>' +
+    '</div>';
+
+  _rwRender('🚚 Tipo de Ruta', html);
+};
+
+App._trPickRadius = function() {
+  var html =
+    '<div class="glass-card" style="padding:12px;margin-bottom:10px;">' +
+      '<p style="font-weight:600;font-size:0.85rem;">📍 Salida: <span style="color:var(--c-accent);">' + App._truckRoute.label + '</span></p>' +
+    '</div>' +
+    '<div class="glass-card" style="padding:20px;margin-bottom:12px;">' +
+      '<h4 style="font-weight:700;margin-bottom:12px;">📏 Radio de cobertura</h4>' +
+      '<button class="btn btn--secondary w-full" style="margin-bottom:8px;" onclick="App._trExecute(false, 5)">🚗 5 km — Zona cercana</button>' +
+      '<button class="btn btn--secondary w-full" style="margin-bottom:8px;" onclick="App._trExecute(false, 10)">🚗 10 km — Zona media</button>' +
+      '<button class="btn btn--primary w-full" style="margin-bottom:8px;" onclick="App._trExecute(false, 20)">🚗 20 km — Zona amplia</button>' +
+      '<button class="btn btn--secondary w-full" onclick="App._trExecute(false, 50)">🌆 50 km — Toda la ciudad</button>' +
+    '</div>';
+
+  _rwRender('🚚 Radio', html);
+};
+
+App._trExecute = function(pendingOnly, radiusKm) {
+  radiusKm = radiusKm || 50;
+  _rwRender('🚚 Generando Ruta...',
+    '<div class="glass-card" style="text-align:center;padding:24px;">' +
+      '<div class="btn__spinner" style="border-color:rgba(108,60,225,0.3);border-top-color:#6C3CE1;margin:0 auto 16px;"></div>' +
+      '<h3 style="font-weight:700;margin-bottom:8px;">' + (pendingOnly ? 'Buscando entregas pendientes...' : 'Buscando clientes cercanos...') + '</h3>' +
+      '<p style="color:var(--c-text-muted);font-size:0.8rem;">Geocodificando direcciones y optimizando ruta.<br>Esto puede tardar unos segundos.</p>' +
+    '</div>'
+  );
+
+  var payload = {
+    origin_lat: App._truckRoute.lat,
+    origin_lng: App._truckRoute.lng,
+    radius_km: radiusKm,
+    profile: 'driving-car',
+  };
+  if (pendingOnly) payload.filter_pending = true;
+
+  API.post('/api/routes/clients', payload)
+    .then(function(data) { App._renderRouteResult(data, '🚚', 'ruta_camion', radiusKm); })
+    .catch(function(err) {
+      haptic('error');
+      showToast('Error: ' + (err.message || 'Intenta de nuevo'), 'error');
+      CMD_HANDLERS.ruta_camion();
+    });
+};
+
+// ─── WEEKLY ROUTE HELPERS ───
+
+App._wkPickDay = function(day) {
+  App._weekRoute = { dia: day };
+
+  var html =
+    '<div class="glass-card" style="padding:12px;margin-bottom:10px;">' +
+      '<p style="font-weight:600;font-size:0.85rem;">📅 Día: <span style="color:var(--c-accent);">' + day + '</span></p>' +
+    '</div>' +
+    '<div class="glass-card" style="padding:20px;margin-bottom:12px;">' +
+      '<h4 style="font-weight:700;margin-bottom:12px;">📍 ¿Desde dónde sales?</h4>' +
+      '<button class="btn btn--primary w-full" onclick="App._wkGPS()" id="wk-gps-btn" style="margin-bottom:16px;">' +
+        '<span id="wk-gps-text">📡 Usar mi ubicación actual</span>' +
+        '<div id="wk-gps-spinner" class="btn__spinner hidden"></div>' +
+      '</button>' +
+      '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">' +
+        '<div style="flex:1;height:1px;background:var(--c-border);"></div>' +
+        '<span style="color:var(--c-text-muted);font-size:0.8rem;">o escribe dirección</span>' +
+        '<div style="flex:1;height:1px;background:var(--c-border);"></div>' +
+      '</div>' +
+      '<input type="text" id="wk-address" placeholder="Ej: Mi casa, Calle 80, Bogotá" ' +
+        'style="width:100%;padding:12px 14px;background:var(--c-bg-input);border:1px solid var(--c-border);border-radius:10px;color:var(--c-text);font-size:0.9rem;outline:none;box-sizing:border-box;margin-bottom:10px;">' +
+      '<button class="btn btn--secondary w-full" onclick="App._wkGeocode()" id="wk-geo-btn">' +
+        '<span id="wk-geo-text">🔍 Buscar</span>' +
+        '<div id="wk-geo-spinner" class="btn__spinner hidden"></div>' +
+      '</button>' +
+    '</div>';
+
+  _rwRender('📅 Ruta del ' + day, html);
+
+  setTimeout(function() {
+    var inp = document.getElementById('wk-address');
+    if (inp) inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); App._wkGeocode(); }
+    });
+  }, 100);
+};
+
+App._wkGPS = function() {
+  var btn = document.getElementById('wk-gps-btn');
+  var text = document.getElementById('wk-gps-text');
+  var spin = document.getElementById('wk-gps-spinner');
+  if (btn) btn.disabled = true;
+  if (text) text.classList.add('hidden');
+  if (spin) spin.classList.remove('hidden');
+
+  navigator.geolocation.getCurrentPosition(
+    function(pos) {
+      App._weekRoute.lat = pos.coords.latitude;
+      App._weekRoute.lng = pos.coords.longitude;
+      haptic('success');
+      App._wkExecute();
+    },
+    function() {
+      showToast('No se pudo obtener ubicación', 'error');
+      if (btn) btn.disabled = false; if (text) text.classList.remove('hidden'); if (spin) spin.classList.add('hidden');
+    },
+    { enableHighAccuracy: true, timeout: 15000 }
+  );
+};
+
+App._wkGeocode = function() {
+  var inp = document.getElementById('wk-address');
+  var addr = inp ? inp.value.trim() : '';
+  if (!addr) { showToast('Escribe una dirección', 'error'); return; }
+
+  var btn = document.getElementById('wk-geo-btn');
+  var text = document.getElementById('wk-geo-text');
+  var spin = document.getElementById('wk-geo-spinner');
+  if (btn) btn.disabled = true;
+  if (text) text.classList.add('hidden');
+  if (spin) spin.classList.remove('hidden');
+
+  API.post('/api/geocode', { address: addr })
+    .then(function(data) {
+      if (!data.found) {
+        showToast('No se encontró la dirección', 'error');
+        if (btn) btn.disabled = false; if (text) text.classList.remove('hidden'); if (spin) spin.classList.add('hidden');
+        return;
+      }
+      App._weekRoute.lat = data.lat;
+      App._weekRoute.lng = data.lng;
+      haptic('success');
+      App._wkExecute();
+    })
+    .catch(function() {
+      showToast('Error buscando dirección', 'error');
+      if (btn) btn.disabled = false; if (text) text.classList.remove('hidden'); if (spin) spin.classList.add('hidden');
+    });
+};
+
+App._wkExecute = function() {
+  var day = App._weekRoute.dia;
+  _rwRender('📅 Generando Ruta ' + day + '...',
+    '<div class="glass-card" style="text-align:center;padding:24px;">' +
+      '<div class="btn__spinner" style="border-color:rgba(108,60,225,0.3);border-top-color:#6C3CE1;margin:0 auto 16px;"></div>' +
+      '<h3 style="font-weight:700;margin-bottom:8px;">Buscando clientes del ' + day + '...</h3>' +
+      '<p style="color:var(--c-text-muted);font-size:0.8rem;">Geocodificando y optimizando ruta peatonal.</p>' +
+    '</div>'
+  );
+
+  API.post('/api/routes/clients', {
+    origin_lat: App._weekRoute.lat,
+    origin_lng: App._weekRoute.lng,
+    radius_km: 50,
+    profile: 'foot-walking',
+    dia_visita: day,
+  })
+    .then(function(data) { App._renderRouteResult(data, '📅', 'ruta_semanal', 50); })
+    .catch(function(err) {
+      haptic('error');
+      showToast('Error: ' + (err.message || 'Intenta de nuevo'), 'error');
+      CMD_HANDLERS.ruta_semanal();
+    });
+};
+
+// ─── SHARED ROUTE RESULT RENDERER ───
+
+App._renderRouteResult = function(data, emoji, retryCmd, radiusKm) {
+  haptic('success');
+  var html = '';
+
+  if (data.pending_geocode && data.pending_geocode > 0) {
+    html +=
+      '<div class="glass-card" style="padding:12px;margin-bottom:10px;border:1px solid rgba(255,193,7,0.3);">' +
+        '<p style="font-size:0.8rem;color:#FFC107;font-weight:600;margin:0;">⏳ ' + data.pending_geocode + ' clientes pendientes de ubicar. Intenta de nuevo para procesar más.</p>' +
+      '</div>';
+  }
+
+  if (data.errors && data.errors.length > 0) {
+    html +=
+      '<div class="glass-card" style="padding:14px;margin-bottom:12px;border:1px solid rgba(255,107,157,0.3);">' +
+        '<p style="font-size:0.8rem;color:#FF6B9D;font-weight:600;margin-bottom:4px;">⚠️ ' + data.errors.length + ' aviso(s):</p>' +
+        '<p style="font-size:0.75rem;color:var(--c-text-muted);margin:0;">' + data.errors.join('<br>') + '</p>' +
+      '</div>';
+  }
+
+  if (data.stops && data.stops.length > 0) {
+    html +=
+      '<div class="glass-card" style="padding:16px;margin-bottom:12px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+          '<div>' +
+            '<span style="font-size:1.5rem;font-weight:700;color:var(--c-accent);">' + data.stops.length + '</span>' +
+            '<span style="color:var(--c-text-muted);font-size:0.85rem;"> clientes en ruta</span>' +
+          '</div>' +
+          '<div style="text-align:right;">' +
+            '<div style="font-size:0.85rem;color:var(--c-text-muted);">⏱️ ~' + (data.total_time_min || 0) + ' min</div>' +
+            (data.total_distance_km ? '<div style="font-size:0.75rem;color:var(--c-text-muted);">📏 ' + data.total_distance_km + ' km</div>' : '') +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    if (data.google_maps_url) {
+      html +=
+        '<a href="' + data.google_maps_url + '" target="_blank" class="btn btn--accent w-full" ' +
+          'style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:12px;text-decoration:none;">' +
+          '🗺️ Abrir Ruta en Google Maps' +
+        '</a>';
+    }
+
+    html += '<div class="glass-card" style="padding:16px;">';
+    data.stops.forEach(function(stop, i) {
+      html +=
+        '<div style="display:flex;gap:12px;padding:10px 0;' + (i < data.stops.length - 1 ? 'border-bottom:1px solid var(--c-border);' : '') + '">' +
+          '<div style="width:28px;height:28px;border-radius:50%;background:var(--c-accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:700;flex-shrink:0;">' + (i + 1) + '</div>' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-weight:600;font-size:0.9rem;">👤 ' + stop.name + '</div>' +
+            (stop.address ? '<div style="font-size:0.75rem;color:var(--c-text-muted);margin-top:2px;">' + stop.address + '</div>' : '') +
+            (stop.phone ? '<div style="font-size:0.7rem;color:var(--c-text-secondary);margin-top:1px;">📞 ' + stop.phone + '</div>' : '') +
+          '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+
+    html += '<button class="btn btn--secondary w-full" style="margin-top:12px;" onclick="CMD_HANDLERS.' + retryCmd + '()">🔄 Armar otra ruta</button>';
+  } else {
+    html +=
+      '<div class="glass-card" style="text-align:center;padding:24px;">' +
+        '<div style="font-size:3rem;margin-bottom:12px;">📭</div>' +
+        '<p style="color:var(--c-text-muted);margin-bottom:12px;">' + (data.errors && data.errors[0] ? data.errors[0] : 'No se encontraron clientes.') + '</p>' +
+        '<button class="btn btn--secondary w-full" onclick="CMD_HANDLERS.' + retryCmd + '()">🔄 Intentar de nuevo</button>' +
+      '</div>';
+  }
+
+  _rwRender(emoji + ' Ruta Optimizada', html);
 };
 
 

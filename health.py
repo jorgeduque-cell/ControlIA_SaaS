@@ -1333,21 +1333,116 @@ class AppHandler(BaseHTTPRequestHandler):
             self._send_error(500, str(e))
 
     def _api_generate_backup(self, vendor_id):
-        """POST /api/documents/backup — Generate backup JSON and send to chat."""
+        """POST /api/documents/backup — Generate Excel backup and send to chat."""
         from database import get_backup_data
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
         try:
             backup = get_backup_data(vendor_id)
-            text = json.dumps(backup, default=str, ensure_ascii=False, indent=2)
-            pdf_buffer = io.BytesIO(text.encode('utf-8'))
+
+            wb = Workbook()
+            # Remove default sheet
+            wb.remove(wb.active)
+
+            # Style definitions
+            header_font = Font(name='Calibri', bold=True, color='FFFFFF', size=11)
+            header_fill = PatternFill(start_color='2E3192', end_color='2E3192', fill_type='solid')
+            header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            cell_font = Font(name='Calibri', size=10)
+            cell_align = Alignment(vertical='center', wrap_text=True)
+            thin_border = Border(
+                left=Side(style='thin', color='CCCCCC'),
+                right=Side(style='thin', color='CCCCCC'),
+                top=Side(style='thin', color='CCCCCC'),
+                bottom=Side(style='thin', color='CCCCCC'),
+            )
+
+            # Spanish sheet names
+            sheet_names = {
+                'clientes': 'Clientes',
+                'pedidos': 'Pedidos',
+                'finanzas': 'Finanzas',
+                'notas_cliente': 'Notas',
+                'metas': 'Metas',
+                'productos': 'Productos',
+            }
+
+            # Columns to exclude from export
+            exclude_cols = {'vendedor_id'}
+
+            for table_name, rows in backup.items():
+                sheet_title = sheet_names.get(table_name, table_name.capitalize())
+                ws = wb.create_sheet(title=sheet_title)
+
+                if not rows:
+                    ws.append(['Sin datos'])
+                    continue
+
+                # Get column names from the first row, excluding vendedor_id
+                all_cols = list(dict(rows[0]).keys())
+                cols = [c for c in all_cols if c not in exclude_cols]
+
+                # Spanish column headers
+                col_labels = {
+                    'id': 'ID', 'nombre': 'Nombre', 'telefono': 'Teléfono',
+                    'direccion': 'Dirección', 'estado': 'Estado', 'tipo_negocio': 'Tipo Negocio',
+                    'tipo_cliente': 'Tipo Cliente', 'dia_visita': 'Día Visita', 'fecha': 'Fecha',
+                    'latitud': 'Latitud', 'longitud': 'Longitud',
+                    'producto': 'Producto', 'cantidad': 'Cantidad',
+                    'precio_compra': 'Precio Compra', 'precio_venta': 'Precio Venta',
+                    'estado_pago': 'Estado Pago', 'cliente_id': 'ID Cliente',
+                    'tipo': 'Tipo', 'concepto': 'Concepto', 'monto': 'Monto',
+                    'nota': 'Nota', 'stock_actual': 'Stock', 'stock_minimo': 'Stock Mín.',
+                    'meta_unidades': 'Meta Uds.', 'mes': 'Mes',
+                    'fecha_creacion': 'Fecha Creación', 'nota_inicial': 'Nota Inicial',
+                }
+
+                # Write headers
+                for col_idx, col_name in enumerate(cols, 1):
+                    cell = ws.cell(row=1, column=col_idx, value=col_labels.get(col_name, col_name))
+                    cell.font = header_font
+                    cell.fill = header_fill
+                    cell.alignment = header_align
+                    cell.border = thin_border
+
+                # Write data rows
+                for row_idx, row in enumerate(rows, 2):
+                    row_dict = dict(row)
+                    for col_idx, col_name in enumerate(cols, 1):
+                        value = row_dict.get(col_name, '')
+                        # Convert non-serializable types
+                        if value is None:
+                            value = ''
+                        cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                        cell.font = cell_font
+                        cell.alignment = cell_align
+                        cell.border = thin_border
+
+                # Auto-fit column widths (approximate)
+                for col_idx, col_name in enumerate(cols, 1):
+                    header_len = len(col_labels.get(col_name, col_name))
+                    max_len = header_len
+                    for row in rows[:50]:  # Sample first 50 rows
+                        val = str(dict(row).get(col_name, ''))
+                        max_len = max(max_len, min(len(val), 40))
+                    ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = max_len + 3
+
+                # Freeze header row
+                ws.freeze_panes = 'A2'
+
+            # Save to buffer
+            excel_buffer = io.BytesIO()
+            wb.save(excel_buffer)
+            excel_buffer.seek(0)
 
             today_str = date.today().isoformat()
-            filename = f"controlia_backup_{today_str}.json"
-            caption = f"Respaldo ControlIA - {today_str}"
+            filename = f"ControlIA_Respaldo_{today_str}.xlsx"
+            caption = f"📊 Respaldo ControlIA — {today_str}"
 
-            # Send JSON file directly (not PDF)
+            # Send Excel file via Telegram
             url = f"https://api.telegram.org/bot{TOKEN}/sendDocument"
             boundary = '----FormBoundary7MA4YWxkTrZu0gW'
-            file_data = pdf_buffer.getvalue()
+            file_data = excel_buffer.getvalue()
 
             body_parts = []
             body_parts.append(f'--{boundary}'.encode())
@@ -1360,7 +1455,7 @@ class AppHandler(BaseHTTPRequestHandler):
             body_parts.append(caption.encode('utf-8'))
             body_parts.append(f'--{boundary}'.encode())
             body_parts.append(f'Content-Disposition: form-data; name="document"; filename="{filename}"'.encode())
-            body_parts.append(b'Content-Type: application/json')
+            body_parts.append(b'Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
             body_parts.append(b'')
             body_parts.append(file_data)
             body_parts.append(f'--{boundary}--'.encode())
@@ -1373,7 +1468,7 @@ class AppHandler(BaseHTTPRequestHandler):
             with urllib.request.urlopen(req, timeout=30) as resp:
                 result = json.loads(resp.read())
                 if result.get('ok'):
-                    self._json_response({"ok": True, "message": "Respaldo enviado al chat"})
+                    self._json_response({"ok": True, "message": "📊 Respaldo Excel enviado al chat"})
                 else:
                     self._send_error(500, "No se pudo enviar el respaldo")
         except Exception as e:
@@ -2135,10 +2230,33 @@ class AppHandler(BaseHTTPRequestHandler):
             all_clients = get_clients(vendor_id)
             with_addr = [dict(c) for c in all_clients if c.get('direccion') and str(c['direccion']).strip()]
 
+            # Optional filter by visit day (for weekly routes)
+            dia_visita = body.get('dia_visita', '').strip()
+            if dia_visita:
+                with_addr = [c for c in with_addr if (c.get('dia_visita') or '').strip().lower() == dia_visita.lower()]
+
+            # Optional filter: only with pending orders (for delivery routes)
+            filter_pending = body.get('filter_pending', False)
+            if filter_pending:
+                from database import get_orders
+                pending = get_orders(vendor_id, estado='Pendiente')
+                pending_client_ids = set()
+                if pending:
+                    for o in pending:
+                        cid = o.get('cliente_id')
+                        if cid:
+                            pending_client_ids.add(int(cid))
+                with_addr = [c for c in with_addr if c.get('id') in pending_client_ids]
+
             if not with_addr:
+                msg = "No tienes clientes con dirección registrada."
+                if dia_visita:
+                    msg = "No tienes clientes con dirección asignados al día " + dia_visita + "."
+                if filter_pending:
+                    msg = "No hay pedidos pendientes con dirección registrada."
                 self._json_response({
                     "found": 0, "stops": [], "google_maps_url": None,
-                    "errors": ["No tienes clientes con dirección registrada."], "total_time_min": 0,
+                    "errors": [msg], "total_time_min": 0,
                 })
                 return
 
