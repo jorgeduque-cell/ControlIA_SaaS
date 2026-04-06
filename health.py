@@ -1664,17 +1664,23 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def _json_response(self, data, status=200):
         """Send a JSON response with CORS headers."""
-        body = json.dumps(data, default=str).encode('utf-8')
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self._set_cors_headers()
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            body = json.dumps(data, default=str).encode('utf-8')
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self._set_cors_headers()
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            logger.warning("Client disconnected before response was sent (BrokenPipe).")
 
     def _send_error(self, status, message):
         """Send a JSON error response."""
-        self._json_response({"error": message}, status)
+        try:
+            self._json_response({"error": message}, status)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            logger.warning("Client disconnected during error response.")
 
     def _read_json_body(self):
         """Read and parse JSON body from POST request."""

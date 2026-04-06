@@ -32,98 +32,153 @@ SERVICE_TIME_PER_STOP = 300
 # 1. GEOCODING — Nominatim (OpenStreetMap, free, no key needed)
 # =========================================================================
 
+def _sanitize_colombian_address(address):
+    """Sanitize Colombian addresses for better geocoding results.
+
+    Problems with raw Colombian addresses:
+      - Abbreviations: Cl., Cra., Dg., Tv., Av. → not understood by OSM
+      - # notation: #7h-59 → confuses geocoders
+      - Postal codes: 110141, 111166 → not in OSM
+      - Extra commas and neighborhood names → too specific
+
+    Returns:
+        str: Cleaned address optimized for geocoding.
+    """
+    import re
+
+    addr = address.strip()
+
+    # Step 1: Remove Colombian postal codes (6-digit numbers at start)
+    addr = re.sub(r'^\d{5,6}\s*,?\s*', '', addr)
+
+    # Step 2: Expand Colombian abbreviations
+    replacements = [
+        (r'\bCl\.\s*', 'Calle '),
+        (r'\bCra\.\s*', 'Carrera '),
+        (r'\bCra\s+', 'Carrera '),
+        (r'\bDg\.\s*', 'Diagonal '),
+        (r'\bTv\.\s*', 'Transversal '),
+        (r'\bAv\.\s*', 'Avenida '),
+        (r'\bKr\.\s*', 'Carrera '),
+        (r'\bKra\.\s*', 'Carrera '),
+    ]
+    for pattern, repl in replacements:
+        addr = re.sub(pattern, repl, addr, flags=re.IGNORECASE)
+
+    # Step 3: Simplify # notation (Calle 156 #7h-59 → Calle 156 7h 59)
+    addr = addr.replace('#', ' ').replace('  ', ' ')
+
+    # Step 4: Remove "Sur", "N", "AYACUCHO" and other noise from house numbers
+    addr = re.sub(r'\bSur\b', 'Sur', addr)
+
+    # Step 5: Keep only useful parts — split by comma, keep first 2-3 parts
+    parts = [p.strip() for p in addr.split(',') if p.strip()]
+    if len(parts) > 3:
+        # Keep: street address, locality, city — drop postal codes, departments
+        parts = parts[:3]
+    addr = ', '.join(parts)
+
+    return addr.strip()
+
+
 def geocode_nominatim(address, country_code="co"):
     """Convert an address to (lat, lng) using multiple geocoding providers.
     Cascade: Nominatim → Photon (Komoot) → geocode.maps.co
-    Each provider retries up to 2 times on 429 with exponential backoff.
+    Applies Colombian address sanitization before each attempt.
 
     Returns:
         tuple: (lat, lng) or (None, None) if all providers fail.
     """
     import time as _time
 
+    # Sanitize the address for better hit rate
+    clean_addr = _sanitize_colombian_address(address)
+
     def _try_nominatim(addr, cc):
         """Primary: OpenStreetMap Nominatim."""
-        for attempt in range(2):
-            try:
-                resp = requests.get(
-                    f"{NOMINATIM_URL}/search",
-                    params={"q": addr, "format": "json", "limit": 1, "countrycodes": cc},
-                    headers={"User-Agent": "ControlIA-SaaS/3.0 (Telegram Bot)"},
-                    timeout=10,
-                )
-                if resp.status_code == 429:
-                    _time.sleep(2 ** (attempt + 1))
-                    continue
-                resp.raise_for_status()
-                data = resp.json()
-                if data:
-                    return float(data[0]["lat"]), float(data[0]["lon"])
-                return None, None
-            except Exception:
+        try:
+            resp = requests.get(
+                f"{NOMINATIM_URL}/search",
+                params={"q": addr, "format": "json", "limit": 1, "countrycodes": cc},
+                headers={"User-Agent": "ControlIA-SaaS/3.0 (Telegram Bot)"},
+                timeout=6,
+            )
+            if resp.status_code == 429:
                 _time.sleep(2)
-        return None, None
+                return None, None
+            resp.raise_for_status()
+            data = resp.json()
+            if data:
+                return float(data[0]["lat"]), float(data[0]["lon"])
+            return None, None
+        except Exception:
+            return None, None
 
     def _try_photon(addr, cc):
         """Fallback 1: Photon by Komoot (OSM-based, lenient rate limits)."""
-        for attempt in range(2):
-            try:
-                resp = requests.get(
-                    "https://photon.komoot.io/api",
-                    params={"q": addr, "limit": 1, "lang": "es"},
-                    headers={"User-Agent": "ControlIA-SaaS/3.0"},
-                    timeout=10,
-                )
-                if resp.status_code == 429:
-                    _time.sleep(2 ** (attempt + 1))
-                    continue
-                resp.raise_for_status()
-                data = resp.json()
-                features = data.get("features", [])
-                if features:
-                    coords = features[0]["geometry"]["coordinates"]
-                    return float(coords[1]), float(coords[0])  # GeoJSON: [lng, lat]
-                return None, None
-            except Exception:
+        try:
+            resp = requests.get(
+                "https://photon.komoot.io/api",
+                params={"q": addr, "limit": 1, "lang": "es"},
+                headers={"User-Agent": "ControlIA-SaaS/3.0"},
+                timeout=6,
+            )
+            if resp.status_code == 429:
                 _time.sleep(2)
-        return None, None
+                return None, None
+            resp.raise_for_status()
+            data = resp.json()
+            features = data.get("features", [])
+            if features:
+                coords = features[0]["geometry"]["coordinates"]
+                return float(coords[1]), float(coords[0])  # GeoJSON: [lng, lat]
+            return None, None
+        except Exception:
+            return None, None
 
     def _try_maps_co(addr, cc):
         """Fallback 2: geocode.maps.co (free, no key for basic use)."""
-        for attempt in range(2):
-            try:
-                resp = requests.get(
-                    "https://geocode.maps.co/search",
-                    params={"q": addr, "format": "json", "limit": 1, "countrycodes": cc},
-                    headers={"User-Agent": "ControlIA-SaaS/3.0"},
-                    timeout=10,
-                )
-                if resp.status_code == 429:
-                    _time.sleep(2 ** (attempt + 1))
-                    continue
-                resp.raise_for_status()
-                data = resp.json()
-                if data:
-                    return float(data[0]["lat"]), float(data[0]["lon"])
-                return None, None
-            except Exception:
+        try:
+            resp = requests.get(
+                "https://geocode.maps.co/search",
+                params={"q": addr, "format": "json", "limit": 1, "countrycodes": cc},
+                headers={"User-Agent": "ControlIA-SaaS/3.0"},
+                timeout=6,
+            )
+            if resp.status_code == 429:
                 _time.sleep(2)
-        return None, None
+                return None, None
+            resp.raise_for_status()
+            data = resp.json()
+            if data:
+                return float(data[0]["lat"]), float(data[0]["lon"])
+            return None, None
+        except Exception:
+            return None, None
 
-    # ── Cascade through providers ──
+    # ── Cascade through providers using CLEANED address ──
     providers = [
         ("Nominatim", _try_nominatim),
         ("Photon", _try_photon),
         ("Maps.co", _try_maps_co),
     ]
-    for name, fn in providers:
-        lat, lng = fn(address, country_code)
-        if lat is not None:
-            logger.info("Geocoded '%s' via %s → (%.4f, %.4f)", address[:50], name, lat, lng)
-            return lat, lng
-        logger.warning("Geocode failed with %s for '%s', trying next...", name, address[:50])
 
-    logger.error("All geocode providers failed for '%s'", address[:80])
+    # Try with cleaned address first
+    for name, fn in providers:
+        lat, lng = fn(clean_addr, country_code)
+        if lat is not None:
+            logger.info("Geocoded '%s' via %s → (%.4f, %.4f)", clean_addr[:50], name, lat, lng)
+            return lat, lng
+
+    # If cleaned address failed AND it's different from original, try original
+    if clean_addr != address.strip():
+        for name, fn in providers:
+            lat, lng = fn(address.strip(), country_code)
+            if lat is not None:
+                logger.info("Geocoded (raw) '%s' via %s → (%.4f, %.4f)", address[:50], name, lat, lng)
+                return lat, lng
+
+    logger.warning("Geocode failed for '%s' (cleaned: '%s')", address[:60], clean_addr[:60])
     return None, None
 
 
