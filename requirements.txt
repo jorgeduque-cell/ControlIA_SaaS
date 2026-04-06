@@ -3,8 +3,7 @@ reportlab==4.1.0
 psycopg[binary]>=3.1
 psycopg_pool>=3.1
 python-dotenv>=1.0.0
-# V2 — Zero-Cost Routing Engine
-ortools>=9.9
+# V3 — VROOM-based Routing Engine (zero heavy deps)
 scikit-learn>=1.4
 requests>=2.31
 openpyxl>=3.1

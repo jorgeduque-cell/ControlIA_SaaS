@@ -741,6 +741,11 @@ var App = {
 
         if (config.beforeSubmit) formData = config.beforeSubmit(formData);
 
+        // Merge extra data (e.g. product name for goals)
+        if (config.extraData) {
+          Object.keys(config.extraData).forEach(function(k) { formData[k] = config.extraData[k]; });
+        }
+
         if (submitTextEl) submitTextEl.classList.add('hidden');
         if (spinner) spinner.classList.remove('hidden');
         submitBtn.disabled = true;
@@ -2551,37 +2556,137 @@ var CMD_HANDLERS = {
   // ── Finanzas Extras ──
   meta: function() {
     App.showResult({
-      title: '🎯 Meta Mensual',
-      apiEndpoint: '/api/finance/summary',
+      title: '🎯 Metas de Venta',
+      apiEndpoint: '/api/finance/goals',
       render: function(data) {
+        var html = '';
         var meta = data.meta_mensual || 0;
-        var sales = data.total_sales || 0;
-        var pct = meta > 0 ? Math.round((sales / meta) * 100) : 0;
-        var remaining = Math.max(0, meta - sales);
-        return '<div class="glass-card" style="text-align:center;padding:24px;margin-bottom:12px;">' +
-          '<div style="font-size:2.5rem;margin-bottom:8px;">🎯</div>' +
-          '<div style="font-size:1.3rem;font-weight:700;color:var(--c-accent);margin-bottom:4px;">' + pct + '% cumplido</div>' +
-          '<div style="color:var(--c-text-muted);font-size:0.85rem;">Meta: ' + formatCOP(meta) + '</div>' +
-          '</div>' +
-          '<div class="glass-card" style="display:flex;justify-content:space-between;padding:14px 18px;margin-bottom:8px;">' +
-          '<span>Vendido</span><span style="font-weight:700;color:#00E676;">' + formatCOP(sales) + '</span></div>' +
-          '<div class="glass-card" style="display:flex;justify-content:space-between;padding:14px 18px;margin-bottom:8px;">' +
-          '<span>Faltante</span><span style="font-weight:700;color:#FF6B9D;">' + formatCOP(remaining) + '</span></div>' +
-          (meta === 0 ? '<div style="margin-top:12px;text-align:center;color:var(--c-text-muted);font-size:0.8rem;">Configura tu meta con Configurar Meta</div>' : '');
+        var monthSales = data.total_month_sales || 0;
+        var goals = data.goals || [];
+
+        // ── Global sales meta ──
+        if (meta > 0) {
+          var pctGlobal = Math.round((monthSales / meta) * 100);
+          var remaining = Math.max(0, meta - monthSales);
+          var barFill = Math.min(pctGlobal, 100);
+          html += '<div class="glass-card" style="padding:18px;margin-bottom:12px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+            '<span style="font-weight:700;">💰 Meta de Facturación</span>' +
+            '<span style="color:var(--c-accent);font-weight:700;">' + pctGlobal + '%</span></div>' +
+            '<div style="background:rgba(255,255,255,0.1);border-radius:8px;height:10px;overflow:hidden;margin-bottom:8px;">' +
+            '<div style="background:linear-gradient(90deg,#00E676,#00D4FF);height:100%;width:' + barFill + '%;border-radius:8px;transition:width 0.6s;"></div></div>' +
+            '<div style="display:flex;justify-content:space-between;font-size:0.8rem;color:var(--c-text-muted);">' +
+            '<span>Vendido: ' + formatCOP(monthSales) + '</span>' +
+            '<span>Meta: ' + formatCOP(meta) + '</span></div>' +
+            (remaining > 0 ? '<div style="text-align:center;margin-top:6px;font-size:0.8rem;color:#FF6B9D;">Falta: ' + formatCOP(remaining) + '</div>' : '<div style="text-align:center;margin-top:6px;color:#00E676;font-weight:700;">🎉 ¡Meta cumplida!</div>') +
+            '</div>';
+        }
+
+        // ── Per-product goals ──
+        if (goals.length > 0) {
+          html += '<div style="font-weight:700;font-size:0.9rem;margin:12px 0 8px;color:var(--c-text-muted);">📦 METAS POR PRODUCTO</div>';
+          goals.forEach(function(g) {
+            var pct = Math.round(g.progreso || 0);
+            var barW = Math.min(pct, 100);
+            var emoji = pct >= 100 ? '🏆' : (pct >= 75 ? '💪' : (pct >= 50 ? '🚀' : '⚡'));
+            html += '<div class="glass-card" style="padding:14px;margin-bottom:8px;">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+              '<span style="font-weight:600;">' + emoji + ' ' + g.producto + '</span>' +
+              '<span style="font-weight:700;color:var(--c-accent);">' + pct + '%</span></div>' +
+              '<div style="background:rgba(255,255,255,0.1);border-radius:6px;height:8px;overflow:hidden;margin-bottom:6px;">' +
+              '<div style="background:linear-gradient(90deg,#BB86FC,#FF6B9D);height:100%;width:' + barW + '%;border-radius:6px;"></div></div>' +
+              '<div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--c-text-muted);">' +
+              '<span>' + g.vendidas + ' / ' + g.meta_unidades + ' uds</span>' +
+              '<span>' + formatCOP(g.facturado) + '</span></div></div>';
+          });
+        }
+
+        // ── Empty state ──
+        if (meta === 0 && goals.length === 0) {
+          html += '<div class="glass-card" style="text-align:center;padding:24px;">' +
+            '<div style="font-size:2.5rem;margin-bottom:8px;">🎯</div>' +
+            '<div style="color:var(--c-text-muted);">No tienes metas configuradas.</div>' +
+            '<div style="color:var(--c-text-muted);font-size:0.8rem;margin-top:4px;">Usa "Configurar Meta" para empezar.</div></div>';
+        }
+
+        return html;
       }
     });
   },
 
   meta_set: function() {
+    // Show choice: sales goal or product goal
+    var titleEl = document.getElementById('data-result-title');
+    var content = document.getElementById('data-result-content');
+    if (titleEl) titleEl.textContent = '⚙️ Configurar Meta';
+
+    if (content) {
+      content.innerHTML =
+        '<div style="text-align:center;padding:8px 0 16px;color:var(--c-text-muted);font-size:0.85rem;">Elige el tipo de meta que deseas configurar</div>' +
+        '<div class="glass-card" onclick="CMD_HANDLERS._metaSetSales()" style="padding:20px;margin-bottom:12px;cursor:pointer;text-align:center;touch-action:manipulation;">' +
+        '<div style="font-size:2rem;margin-bottom:6px;">💰</div>' +
+        '<div style="font-weight:700;font-size:1.1rem;margin-bottom:4px;">Meta por Facturación</div>' +
+        '<div style="color:var(--c-text-muted);font-size:0.8rem;">Objetivo global en pesos ($) para el mes</div></div>' +
+        '<div class="glass-card" onclick="CMD_HANDLERS._metaSetProduct()" style="padding:20px;margin-bottom:12px;cursor:pointer;text-align:center;touch-action:manipulation;">' +
+        '<div style="font-size:2rem;margin-bottom:6px;">📦</div>' +
+        '<div style="font-weight:700;font-size:1.1rem;margin-bottom:4px;">Meta por Producto</div>' +
+        '<div style="color:var(--c-text-muted);font-size:0.8rem;">Objetivo en unidades por cada producto</div></div>';
+    }
+    App._showView('data-result');
+  },
+
+  _metaSetSales: function() {
     App.showForm({
-      title: '⚙️ Configurar Meta',
-      subtitle: 'Define tu objetivo mensual de ventas',
+      title: '💰 Meta de Facturación',
+      subtitle: 'Define tu objetivo mensual de ventas en pesos',
       fields: [
         { key: 'meta', label: 'Meta mensual ($)', type: 'number', required: true, icon: '🎯' }
       ],
       submitLabel: 'Guardar Meta',
       apiEndpoint: '/api/finance/meta',
-      successMsg: 'Meta mensual configurada'
+      successMsg: 'Meta de facturación configurada'
+    });
+  },
+
+  _metaSetProduct: function() {
+    // Load products and show selector
+    API.get('/api/products')
+      .then(function(res) {
+        var items = res.items || [];
+        if (!items.length) {
+          showToast('No tienes productos. Usa Configurar primero.', 'error');
+          return;
+        }
+        var titleEl = document.getElementById('data-result-title');
+        var content = document.getElementById('data-result-content');
+        if (titleEl) titleEl.textContent = '📦 Meta por Producto';
+
+        var html = '<div style="color:var(--c-text-muted);font-size:0.85rem;margin-bottom:12px;text-align:center;">Selecciona un producto para configurar su meta</div>';
+        items.forEach(function(p) {
+          html += '<div class="glass-card" onclick="CMD_HANDLERS._metaSetProductForm(\'' + p.nombre.replace(/'/g, "\\'") + '\')" ' +
+            'style="padding:16px;margin-bottom:8px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;touch-action:manipulation;">' +
+            '<span style="font-weight:600;">📦 ' + p.nombre + '</span>' +
+            '<span style="color:var(--c-text-muted);font-size:0.8rem;">Stock: ' + (p.stock_actual || 0) + '</span></div>';
+        });
+        if (content) content.innerHTML = html;
+        App._showView('data-result');
+      })
+      .catch(function(err) {
+        showToast(err.message || 'Error cargando productos', 'error');
+      });
+  },
+
+  _metaSetProductForm: function(productName) {
+    App.showForm({
+      title: '🎯 Meta: ' + productName,
+      subtitle: 'Define cuántas unidades quieres vender este mes',
+      fields: [
+        { key: 'unidades', label: 'Unidades por mes', type: 'number', required: true, icon: '📦' }
+      ],
+      submitLabel: 'Guardar Meta',
+      apiEndpoint: '/api/finance/goals/set',
+      extraData: { producto: productName },
+      successMsg: 'Meta de ' + productName + ' configurada'
     });
   },
 

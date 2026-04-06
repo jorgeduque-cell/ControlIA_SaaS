@@ -263,6 +263,8 @@ class AppHandler(BaseHTTPRequestHandler):
             self._api_get_receivables(vendor_id)
         elif path == '/api/finance/margin':
             self._api_get_margin(vendor_id)
+        elif path == '/api/finance/goals':
+            self._api_get_goals(vendor_id)
         elif path == '/api/pipeline':
             self._api_get_pipeline(vendor_id)
         elif path == '/api/backup':
@@ -316,6 +318,8 @@ class AppHandler(BaseHTTPRequestHandler):
             self._api_assign_day(vendor_id, body)
         elif path == '/api/finance/meta':
             self._api_set_meta(vendor_id, body)
+        elif path == '/api/finance/goals/set':
+            self._api_set_goal(vendor_id, body)
         elif path == '/api/vendor/logo':
             self._api_upload_logo(vendor_id, body)
         elif path.startswith('/api/delete/'):
@@ -613,8 +617,8 @@ class AppHandler(BaseHTTPRequestHandler):
             self._send_error(400, "order_id is required")
             return
         try:
-            deliver_order(int(order_id), vendor_id)
-            self._json_response({"ok": True})
+            income = deliver_order(int(order_id), vendor_id)
+            self._json_response({"ok": True, "income": income})
         except Exception as e:
             self._send_error(500, str(e))
 
@@ -649,11 +653,14 @@ class AppHandler(BaseHTTPRequestHandler):
     # ─────────────────────────────────────────────────────────────────
 
     def _api_get_finance(self, vendor_id):
-        from database import get_finance_summary, get_unpaid_orders
+        from database import get_finance_summary, get_unpaid_orders, get_vendedor
         summary = get_finance_summary(vendor_id)
         # Get total receivable (unpaid orders)
         unpaid = get_unpaid_orders(vendor_id)
         total_receivable = sum(o['total'] for o in unpaid) if unpaid else 0
+        # Get meta from vendedor
+        vendedor = get_vendedor(vendor_id)
+        meta = vendedor.get('meta_mensual', 0) if vendedor else 0
         # Map to what frontend expects
         self._json_response({
             "total_sales": summary.get('income', 0),
@@ -661,6 +668,7 @@ class AppHandler(BaseHTTPRequestHandler):
             "total_expenses": summary.get('expenses', 0),
             "total_receivable": total_receivable,
             "cogs": summary.get('cogs', 0),
+            "meta_mensual": meta or 0,
         })
 
     def _api_get_receivables(self, vendor_id):
@@ -723,7 +731,7 @@ class AppHandler(BaseHTTPRequestHandler):
             "active": state_map.get('Activo', 0),
             "prospects": state_map.get('Prospecto', 0),
             "pending_orders": dash.get('pending_orders', 0),
-            "month_sales": dash.get('today_sales', 0),
+            "month_sales": dash.get('month_sales', 0),
         })
 
     def _api_add_note(self, vendor_id, body):
@@ -805,6 +813,80 @@ class AppHandler(BaseHTTPRequestHandler):
         try:
             update_vendedor(vendor_id, meta_mensual=float(meta))
             self._json_response({"ok": True, "meta": float(meta)})
+        except Exception as e:
+            self._send_error(500, str(e))
+
+    def _api_get_goals(self, vendor_id):
+        """GET /api/finance/goals — Get per-product goals with progress."""
+        from database import get_goals, get_products, get_connection, get_vendedor
+        from datetime import date
+        try:
+            current_month = date.today().strftime("%Y-%m")
+            goals = get_goals(vendor_id, current_month)
+            catalog = get_products(vendor_id)
+            vendedor = get_vendedor(vendor_id)
+            meta_mensual = vendedor.get('meta_mensual', 0) if vendedor else 0
+
+            # Get month sales per product
+            month_start = date.today().replace(day=1).isoformat()
+            conn = get_connection(vendor_id)
+            try:
+                sales_rows = conn.execute(
+                    """SELECT producto, SUM(cantidad) as uds_vendidas,
+                              SUM(cantidad * precio_venta) as facturado
+                       FROM pedidos WHERE vendedor_id = %s
+                         AND fecha >= %s AND estado IN ('Pendiente', 'Entregado')
+                       GROUP BY producto""",
+                    (vendor_id, month_start),
+                ).fetchall()
+                total_month_sales = conn.execute(
+                    "SELECT COALESCE(SUM(monto), 0) as t FROM finanzas WHERE vendedor_id = %s AND tipo = 'Ingreso' AND fecha >= %s",
+                    (vendor_id, month_start),
+                ).fetchone()["t"]
+            finally:
+                conn.close()
+
+            sales_map = {r['producto']: {'uds': r['uds_vendidas'], 'facturado': r['facturado']} for r in sales_rows} if sales_rows else {}
+
+            items = []
+            for g in goals:
+                prod = g['producto']
+                sold = sales_map.get(prod, {}).get('uds', 0)
+                facturado = sales_map.get(prod, {}).get('facturado', 0)
+                matching = [p for p in catalog if p['nombre'] == prod]
+                precio = matching[0]['precio_venta'] if matching else 0
+                pct = (sold / g['meta_unidades'] * 100) if g['meta_unidades'] > 0 else 0
+                items.append({
+                    'producto': prod,
+                    'meta_unidades': g['meta_unidades'],
+                    'vendidas': sold,
+                    'facturado': facturado,
+                    'precio_venta': precio,
+                    'progreso': round(pct, 1),
+                })
+
+            self._json_response({
+                'goals': items,
+                'meta_mensual': meta_mensual,
+                'total_month_sales': total_month_sales,
+                'month': current_month,
+            })
+        except Exception as e:
+            self._send_error(500, str(e))
+
+    def _api_set_goal(self, vendor_id, body):
+        """POST /api/finance/goals/set — Set a per-product monthly goal."""
+        from database import set_goal
+        from datetime import date
+        producto = body.get('producto')
+        unidades = body.get('unidades')
+        if not producto or unidades is None:
+            self._send_error(400, "producto and unidades are required")
+            return
+        try:
+            current_month = date.today().strftime("%Y-%m")
+            set_goal(vendor_id, producto, int(unidades), current_month)
+            self._json_response({"ok": True, "producto": producto, "unidades": int(unidades)})
         except Exception as e:
             self._send_error(500, str(e))
 
@@ -1536,11 +1618,11 @@ class AppHandler(BaseHTTPRequestHandler):
             client_name = client.get('nombre', 'Cliente')
             phone = self._format_phone_co(client['telefono'])
 
-            # Get unpaid orders for this client
-            all_orders = get_orders(vendor_id)
+            # Get unpaid DELIVERED orders for this client
+            all_orders = get_orders(vendor_id, estado='Entregado')
             unpaid = [o for o in all_orders
                       if o.get('cliente_id') == client_id
-                      and o.get('estado_pago') == 'Pendiente']
+                      and o.get('estado_pago') in ('Pendiente', None)]
 
             if not unpaid:
                 self._send_error(400, "Este cliente no tiene deudas pendientes")
@@ -1882,6 +1964,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     "found": len(stops),
                     "in_route": cluster["total_stops"],
                     "total_time_min": cluster["total_time_min"],
+                    "total_distance_km": cluster.get("total_distance_km", 0),
                     "google_maps_url": cluster["google_maps_url"],
                     "stops": cluster["stops"],
                     "errors": errors,
@@ -2142,6 +2225,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     "found": len(stops),
                     "in_route": cluster["total_stops"],
                     "total_time_min": cluster["total_time_min"],
+                    "total_distance_km": cluster.get("total_distance_km", 0),
                     "google_maps_url": cluster["google_maps_url"],
                     "stops": cluster["stops"],
                     "errors": errors,

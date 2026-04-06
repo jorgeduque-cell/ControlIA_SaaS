@@ -63,10 +63,10 @@ logging.basicConfig(
 # =========================================================================
 # GOOGLE MAPS & ROUTING (generic — no business-specific constants)
 # =========================================================================
-MAX_WAYPOINTS = 10
-MINUTES_PER_STOP = 4
-MAX_ROUTE_HOURS = 4
-MAX_DISCOVERY_STOPS = 20
+MAX_WAYPOINTS = 23
+MINUTES_PER_STOP = 5
+MAX_ROUTE_HOURS = 6
+MAX_DISCOVERY_STOPS = 30
 DEFAULT_SEARCH_RADIUS = 1500
 
 SEARCH_RADIUS_OPTIONS = {
@@ -80,8 +80,8 @@ SEARCH_RADIUS_OPTIONS = {
 # =========================================================================
 # V2 — CLUSTERING & ANTI-TARGETING
 # =========================================================================
-KMEANS_THRESHOLD = 10          # Trigger K-Means above this many stops
-DEFAULT_CLUSTER_SIZE = 8       # Target stops per cluster
+KMEANS_THRESHOLD = 23          # Trigger K-Means above this many stops
+DEFAULT_CLUSTER_SIZE = 20      # Target stops per cluster (VROOM supports up to 50)
 
 # Chains to exclude from /ruta_pie prospecting (Anti-Targeting)
 CHAIN_BLACKLIST = [

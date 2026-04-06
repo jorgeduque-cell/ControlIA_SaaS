@@ -3,13 +3,13 @@
 ControlIA SaaS — Logistics & Routing Handler (V2)
 Commands: /ruta_pie, /ruta_camion, /ruta_semanal, /inventario
 
-V2 CHANGES (Zero-Cost Architecture):
+V3 CHANGES (VROOM Architecture):
+  - Single ORS /optimization call (replaces Matrix + OR-Tools)
+  - 3-tier fallback: VROOM → Matrix+Greedy → Haversine offline
   - Google Places API → Overpass API (OSM, free)
   - Google Geocoding → Nominatim (OSM, free)
-  - Nearest-neighbor sort → OR-Tools TSP (optimal, free)
-  - No K-Means clustering → Scikit-Learn K-Means (free)
-  - ORS time matrix for real street-level routing
-  - /ruta_pie now accepts Telegram location (📎 clip)
+  - Scikit-Learn K-Means for zone clustering
+  - Distance in km added to route outputs
 """
 from telebot import types
 from datetime import date
@@ -69,29 +69,24 @@ def register(bot):
                 return
 
             if "Ver Stock" in selected:
-                conn = get_connection(vendedor_id)
-                try:
-                    items = conn.execute(
-                        "SELECT * FROM inventario WHERE vendedor_id = %s ORDER BY producto", (vendedor_id,)
-                    ).fetchall()
-                finally:
-                    conn.close()
+                items = get_products(vendedor_id)
 
                 if not items:
-                    bot.send_message(message.chat.id, "📦 Sin datos de inventario. Ingresa mercancía primero.", reply_markup=types.ReplyKeyboardRemove())
+                    bot.send_message(message.chat.id, "📦 Sin productos. Usa /configurar para crear tu catálogo.", reply_markup=types.ReplyKeyboardRemove())
                     return
 
                 response = "📦 <b>INVENTARIO EN BODEGA</b>\n" + "━" * 30 + "\n\n"
                 for item in items:
                     stock = item.get("stock_actual", 0)
                     stock_min = item.get("stock_minimo", 0)
-                    alert = "🟡 BAJO" if stock <= stock_min else "🟢 OK"
+                    alert = "🟡 BAJO" if stock <= stock_min and stock_min > 0 else "🟢 OK"
                     if stock == 0:
                         alert = "🔴 AGOTADO"
                     ultima = safe_parse_date(item.get("ultima_actualizacion"))
                     ultima_str = ultima.isoformat() if ultima else "N/A"
-                    response += f"📦 <b>{item['producto']}</b>\n"
+                    response += f"📦 <b>{item['nombre']}</b>\n"
                     response += f"   Stock: <b>{stock}</b> uds | Mín: {stock_min} | {alert}\n"
+                    response += f"   💵 Compra: {format_cop(item.get('precio_compra', 0))} | Venta: {format_cop(item.get('precio_venta', 0))}\n"
                     response += f"   📅 Últ. mov: {ultima_str}\n\n"
 
                 bot.send_message(message.chat.id, response, reply_markup=types.ReplyKeyboardRemove())
@@ -143,24 +138,13 @@ def register(bot):
             today = date.today().isoformat()
             conn = get_connection(vendedor_id)
             try:
-                existing = conn.execute(
-                    "SELECT id FROM inventario WHERE vendedor_id = %s AND producto = %s",
-                    (vendedor_id, product),
-                ).fetchone()
-
-                if existing:
-                    conn.execute(
-                        "UPDATE inventario SET stock_actual = stock_actual + %s, ultima_actualizacion = %s WHERE vendedor_id = %s AND producto = %s",
-                        (qty, today, vendedor_id, product),
-                    )
-                else:
-                    conn.execute(
-                        "INSERT INTO inventario (vendedor_id, producto, stock_actual, stock_minimo, ultima_actualizacion) VALUES (%s, %s, %s, 0, %s)",
-                        (vendedor_id, product, qty, today),
-                    )
+                conn.execute(
+                    "UPDATE productos SET stock_actual = stock_actual + %s, ultima_actualizacion = %s WHERE vendedor_id = %s AND nombre = %s",
+                    (qty, today, vendedor_id, product),
+                )
                 conn.commit()
                 new_stock = conn.execute(
-                    "SELECT stock_actual FROM inventario WHERE vendedor_id = %s AND producto = %s",
+                    "SELECT stock_actual FROM productos WHERE vendedor_id = %s AND nombre = %s",
                     (vendedor_id, product),
                 ).fetchone()["stock_actual"]
             finally:
@@ -198,7 +182,7 @@ def register(bot):
             conn = get_connection(vendedor_id)
             try:
                 conn.execute(
-                    "UPDATE inventario SET stock_minimo = %s WHERE vendedor_id = %s AND producto = %s",
+                    "UPDATE productos SET stock_minimo = %s WHERE vendedor_id = %s AND nombre = %s",
                     (min_qty, vendedor_id, product),
                 )
                 conn.commit()
@@ -411,7 +395,9 @@ def register(bot):
                 response += f"📊 <b>{len(pending)} entregas</b> divididas en <b>{len(clusters)} zonas</b> (K-Means)\n\n"
 
             for cluster in clusters:
-                response += f"🗺️ <b>{cluster['label']}</b> — {cluster['total_stops']} paradas | ⏱️ ~{cluster['total_time_min']} min\n"
+                dist_km = cluster.get('total_distance_km', 0)
+                dist_label = f" | 📏 {dist_km} km" if dist_km else ""
+                response += f"🗺️ <b>{cluster['label']}</b> — {cluster['total_stops']} paradas | ⏱️ ~{cluster['total_time_min']} min{dist_label}\n"
                 for i, stop in enumerate(cluster["stops"], 1):
                     response += f"  {i}. {stop['name']} — {stop.get('address', '')}\n"
                 response += "\n"
@@ -556,10 +542,12 @@ def register(bot):
             for cluster in clusters:
                 ordered = cluster["stops"]
                 total_time = cluster["total_time_min"]
+                dist_km = cluster.get("total_distance_km", 0)
+                dist_label = f" | 📏 {dist_km} km" if dist_km else ""
 
-                response = f"📅 <b>RUTA DEL {chosen_day.upper()}</b> (Optimizada)\n"
+                response = f"📅 <b>RUTA DEL {chosen_day.upper()}</b> (Optimizada V3)\n"
                 response += "━" * 30 + "\n\n"
-                response += f"👥 <b>{len(ordered)}</b> clientes | ⏱️ ~{total_time} min caminando\n\n"
+                response += f"👥 <b>{len(ordered)}</b> clientes | ⏱️ ~{total_time} min{dist_label}\n\n"
 
                 for i, stop in enumerate(ordered, 1):
                     response += f"📍 <b>{i}. {stop['name']}</b>\n"
@@ -649,19 +637,22 @@ def _execute_discovery_v2(bot, message, route_data):
         cluster = clusters[0]
         ordered_route = cluster["stops"]
         total_time = cluster["total_time_min"]
+        total_distance_km = cluster.get("total_distance_km", 0)
 
-        total_walk_km = sum(s.get("distance_from_origin", 0) for s in ordered_route) / 1000
         remaining = len(all_places) - len(ordered_route)
 
         # Build output
-        response = "📱 <b>RADAR DE PROSPECCIÓN</b>\n"
+        response = "📱 <b>RADAR DE PROSPECCIÓN V3</b>\n"
         response += "━" * 34 + "\n\n"
         response += f"📍 <b>Zona:</b> {route_data['origin_text']}\n"
         response += f"🎯 <b>Tipo:</b> {route_data['target_label']}\n"
         response += f"📌 <b>Radio:</b> {radius}m\n"
         response += f"🔍 <b>Encontrados:</b> {len(all_places)} negocios\n"
         response += f"📊 <b>En ruta:</b> {len(ordered_route)} paradas\n"
-        response += f"⏱️ <b>Tiempo est.:</b> ~{total_time} min\n\n"
+        response += f"⏱️ <b>Tiempo est.:</b> ~{total_time} min\n"
+        if total_distance_km:
+            response += f"📏 <b>Distancia:</b> {total_distance_km} km\n"
+        response += "\n"
 
         response += "🗺️ <b>RECORRIDO OPTIMIZADO:</b>\n" + "━" * 34 + "\n\n"
         response += f"🟢 <b>INICIO:</b> {route_data['origin_text']}\n     │\n"

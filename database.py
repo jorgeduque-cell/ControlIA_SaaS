@@ -229,7 +229,10 @@ def init_database():
 
     # ── SCHEMA MIGRATIONS (safe to re-run) ──
     cursor.execute("ALTER TABLE vendedores ADD COLUMN IF NOT EXISTS logo_base64 TEXT")
+    cursor.execute("ALTER TABLE vendedores ADD COLUMN IF NOT EXISTS meta_mensual DOUBLE PRECISION DEFAULT 0")
     cursor.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS grupo_pedido TEXT")
+    cursor.execute("ALTER TABLE productos ADD COLUMN IF NOT EXISTS stock_minimo INTEGER DEFAULT 0")
+    cursor.execute("ALTER TABLE productos ADD COLUMN IF NOT EXISTS ultima_actualizacion DATE")
 
     # ── INDEXES for multi-tenant query performance ──
     _create_indexes(cursor)
@@ -497,7 +500,7 @@ def delete_product(product_id, vendedor_id):
 # =========================================================================
 
 def get_clients(vendedor_id, estado=None):
-    """Get all clients for a vendor, optionally filtered by estado."""
+    """Get all clients for a vendor, optionally filtered by estado. Excludes soft-deleted."""
     conn = get_connection(vendedor_id)
     try:
         if estado:
@@ -506,7 +509,7 @@ def get_clients(vendedor_id, estado=None):
                 (vendedor_id, estado),
             ).fetchall()
         return conn.execute(
-            "SELECT * FROM clientes WHERE vendedor_id = %s ORDER BY nombre",
+            "SELECT * FROM clientes WHERE vendedor_id = %s AND estado != 'Eliminado' ORDER BY nombre",
             (vendedor_id,),
         ).fetchall()
     finally:
@@ -582,24 +585,11 @@ def update_client(client_id, vendedor_id, **fields):
 
 
 def delete_client(client_id, vendedor_id):
-    """Delete a client and all related records. Enforces tenant isolation."""
+    """Soft-delete a client (mark as Eliminado). Preserves financial records."""
     conn = get_connection(vendedor_id)
     try:
-        # Cascade: finanzas → pedidos → notas → client
         conn.execute(
-            "DELETE FROM finanzas WHERE pedido_id IN (SELECT id FROM pedidos WHERE cliente_id = %s AND vendedor_id = %s)",
-            (client_id, vendedor_id),
-        )
-        conn.execute(
-            "DELETE FROM notas_cliente WHERE cliente_id = %s AND vendedor_id = %s",
-            (client_id, vendedor_id),
-        )
-        conn.execute(
-            "DELETE FROM pedidos WHERE cliente_id = %s AND vendedor_id = %s",
-            (client_id, vendedor_id),
-        )
-        conn.execute(
-            "DELETE FROM clientes WHERE id = %s AND vendedor_id = %s",
+            "UPDATE clientes SET estado = 'Eliminado' WHERE id = %s AND vendedor_id = %s",
             (client_id, vendedor_id),
         )
         conn.commit()
@@ -786,9 +776,19 @@ def deliver_order(order_id, vendedor_id):
 
 
 def mark_order_paid(order_id, vendedor_id):
-    """Mark order as paid. Tenant-isolated."""
+    """Mark order as paid. Only delivered orders can be paid. Tenant-isolated."""
     conn = get_connection(vendedor_id)
     try:
+        order = conn.execute(
+            "SELECT estado, estado_pago FROM pedidos WHERE id = %s AND vendedor_id = %s",
+            (order_id, vendedor_id),
+        ).fetchone()
+        if not order:
+            raise ValueError("Pedido no encontrado")
+        if order["estado"] != "Entregado":
+            raise ValueError("Solo se pueden cobrar pedidos entregados")
+        if order.get("estado_pago") == "Pagado":
+            raise ValueError("Este pedido ya esta pagado")
         conn.execute(
             "UPDATE pedidos SET estado_pago = 'Pagado' WHERE id = %s AND vendedor_id = %s",
             (order_id, vendedor_id),
@@ -854,13 +854,15 @@ def delete_order(order_id, vendedor_id):
 
 def add_expense(vendedor_id, concepto, monto):
     """Record an expense. Returns the finance record ID."""
+    if monto is None or float(monto) <= 0:
+        raise ValueError("El monto del gasto debe ser mayor a $0")
     today = date.today().isoformat()
     conn = get_connection(vendedor_id)
     try:
         cursor = conn.execute(
             """INSERT INTO finanzas (vendedor_id, tipo, concepto, monto, fecha)
                VALUES (%s, 'Egreso', %s, %s, %s) RETURNING id""",
-            (vendedor_id, concepto, monto, today),
+            (vendedor_id, concepto, float(monto), today),
         )
         record_id = cursor.fetchone()["id"]
         conn.commit()
@@ -1069,6 +1071,11 @@ def get_dashboard_stats(vendedor_id):
             "SELECT COALESCE(SUM(cantidad * precio_venta), 0) as t FROM pedidos WHERE vendedor_id = %s AND fecha = %s",
             (vendedor_id, today),
         ).fetchone()["t"]
+        month_start = date.today().replace(day=1).isoformat()
+        month_sales = conn.execute(
+            "SELECT COALESCE(SUM(monto), 0) as t FROM finanzas WHERE vendedor_id = %s AND tipo = 'Ingreso' AND fecha >= %s",
+            (vendedor_id, month_start),
+        ).fetchone()["t"]
         return {
             "total_clients": total_clients,
             "active_clients": active_clients,
@@ -1076,6 +1083,7 @@ def get_dashboard_stats(vendedor_id):
             "pending_orders": pending_orders,
             "unpaid": unpaid,
             "today_sales": today_sales,
+            "month_sales": month_sales,
         }
     finally:
         conn.close()
