@@ -19,6 +19,9 @@ jd_trading_bot.py
 .vscode/
 .idea/
 
+# Agent metadata
+.claude/
+
 # OS
 Thumbs.db
 Desktop.ini
