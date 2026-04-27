@@ -32,3 +32,34 @@ audit_report.md
 implementation_plan.md
 *.docx
 *.pdf
+
+# Excel temp lock files
+~$*.xlsx
+~$*.xls
+
+# ── Node agent (controlia-agent/) ──────────────────────────────────────────
+controlia-agent/node_modules/
+controlia-agent/dist/
+controlia-agent/.env
+controlia-agent/.env.*
+controlia-agent/.voltagent/
+controlia-agent/.playwright-mcp/
+controlia-agent/.turbo/
+controlia-agent/coverage/
+controlia-agent/*.tsbuildinfo
+controlia-agent/*.log
+controlia-agent/npm-debug.log*
+
+# Local-only data / outputs of the agent (no se despliega)
+controlia-agent/data/
+controlia-agent/database/
+controlia-agent/backups/
+controlia-agent/temp/
+controlia-agent/cotizacion_preview.png
+controlia-agent/pedido.txt
+controlia-agent/pedido_riosol.pdf
+controlia-agent/test-db.ts
+controlia-agent/prisma/dev.db
+controlia-agent/prisma/dev.db-journal
+controlia-agent/**/*.backup-autofix
+controlia-agent/**/*.bak

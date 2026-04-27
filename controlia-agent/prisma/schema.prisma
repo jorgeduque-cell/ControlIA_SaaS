@@ -1,0 +1,487 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model vendedores {
+  id                BigInt           @id
+  nombre_negocio    String           @default("Mi Negocio")
+  estado            String           @default("Inactivo")
+  fecha_vencimiento DateTime?        @db.Date
+  telefono_soporte  String?
+  fecha_registro    DateTime?        @default(now()) @db.Timestamp(6)
+  logo_base64       String?
+  meta_mensual      Float?           @default(0)
+  clientes          clientes[]
+  context_memory    context_memory[]
+  finanzas          finanzas[]
+  inventario        inventario[]
+  metas             metas[]
+  notas_cliente     notas_cliente[]
+  pedidos           pedidos[]
+  productos         productos[]
+}
+
+model clientes {
+  id                 Int              @id @default(autoincrement())
+  vendedor_id        BigInt
+  nombre             String
+  telefono           String?
+  direccion          String?
+  tipo_negocio       String?
+  estado             String?          @default("Prospecto")
+  fecha_registro     DateTime?        @db.Date
+  ultima_interaccion DateTime?        @db.Date
+  latitud            Float?
+  longitud           Float?
+  dia_visita         String?
+  vendedores         vendedores       @relation(fields: [vendedor_id], references: [id], onDelete: Cascade)
+  notas_cliente      notas_cliente[]
+  pedidos            pedidos[]
+  context_memory     context_memory[]
+
+  @@index([vendedor_id])
+}
+
+model productos {
+  id                   Int        @id @default(autoincrement())
+  vendedor_id          BigInt
+  nombre               String
+  precio_compra        Float?     @default(0)
+  precio_venta         Float?     @default(0)
+  stock_actual         Int?       @default(0)
+  fecha_creacion       DateTime?  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  stock_minimo         Int?       @default(0)
+  ultima_actualizacion DateTime?  @db.Date
+  vendedores           vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade)
+
+  @@index([vendedor_id])
+}
+
+model inventario {
+  id                   Int        @id @default(autoincrement())
+  vendedor_id          BigInt
+  producto             String
+  stock_actual         Int        @default(0)
+  stock_minimo         Int        @default(0)
+  ultima_actualizacion DateTime?  @db.Date
+  vendedores           vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade)
+
+  @@index([vendedor_id])
+}
+
+model pedidos {
+  id            Int        @id @default(autoincrement())
+  vendedor_id   BigInt
+  cliente_id    Int?
+  producto      String
+  cantidad      Int
+  precio_compra Float?
+  precio_venta  Float?
+  estado        String?    @default("Pendiente")
+  estado_pago   String?    @default("Pendiente")
+  fecha         DateTime?  @db.Date
+  grupo_pedido  String?
+  clientes      clientes?  @relation(fields: [cliente_id], references: [id])
+  vendedores    vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade)
+  finanzas      finanzas[]
+
+  @@index([vendedor_id])
+  @@index([cliente_id])
+}
+
+model finanzas {
+  id          Int        @id @default(autoincrement())
+  vendedor_id BigInt
+  tipo        String
+  concepto    String?
+  monto       Float
+  fecha       DateTime?  @db.Date
+  pedido_id   Int?
+  pedidos     pedidos?   @relation(fields: [pedido_id], references: [id])
+  vendedores  vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade)
+
+  @@index([vendedor_id])
+}
+
+model notas_cliente {
+  id          Int        @id @default(autoincrement())
+  vendedor_id BigInt
+  cliente_id  Int
+  texto       String
+  fecha       DateTime?  @db.Date
+  clientes    clientes   @relation(fields: [cliente_id], references: [id])
+  vendedores  vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade)
+
+  @@index([vendedor_id])
+}
+
+model metas {
+  id             Int        @id @default(autoincrement())
+  vendedor_id    BigInt
+  producto       String
+  meta_unidades  Int        @default(0)
+  mes            String
+  fecha_creacion DateTime?  @db.Date
+  vendedores     vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade)
+
+  @@index([vendedor_id])
+}
+
+model context_memory {
+  id          BigInt                       @id @default(autoincrement())
+  vendedor_id BigInt
+  cliente_id  Int?
+  tipo        String                       @db.VarChar(50)
+  contenido   String                       @db.Text
+  /// @pgvector vector(1536) — requires pgvector extension
+  embedding   Unsupported("vector(1536)")?
+  consolidado Boolean                      @default(false)
+  metadata    Json?                        @default("{}")
+  created_at  DateTime?                    @default(now()) @db.Timestamp(6)
+  updated_at  DateTime?                    @default(now()) @db.Timestamp(6)
+  clientes    clientes?                    @relation(fields: [cliente_id], references: [id])
+  vendedores  vendedores                   @relation(fields: [vendedor_id], references: [id], onDelete: Cascade)
+
+  @@index([vendedor_id])
+  @@index([cliente_id])
+  @@index([tipo])
+}
+
+model baseClientes {
+  id         BigInt   @id @default(autoincrement())
+  created_at DateTime @default(now()) @db.Timestamp(6)
+}
+
+model historico_precios {
+  id           Int      @id @default(autoincrement())
+  sku          String
+  precio_costo Float
+  precio_venta Float
+  fecha        DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([sku])
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── MÓDULO EMPRESARIAL (extensión plan C: agrega sin romper lo existente) ──
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Convenciones:
+//  - snake_case español (igual que las tablas legacy)
+//  - vendedor_id BigInt en cada tabla (multi-tenant como el resto)
+//  - estados/tipos como String con default (evita migraciones enum frágiles)
+
+// ── Numeración consecutiva (COT-2025-0001, REM-2025-0001, …) ────────────────
+model consecutivos {
+  id            Int      @id @default(autoincrement())
+  vendedor_id   BigInt
+  tipo          String // COT, REM, OC, AJ, CLI, PRV, PRD
+  anio          Int
+  ultimo_numero Int      @default(0)
+  updated_at    DateTime @updatedAt
+
+  @@unique([vendedor_id, tipo, anio])
+  @@index([vendedor_id])
+}
+
+// ── Auditoría global ─────────────────────────────────────────────────────────
+model audit_log {
+  id          BigInt   @id @default(autoincrement())
+  vendedor_id BigInt?
+  accion      String // CREATE_COTIZACION, CONFIRM_REMISION, CANCEL_ORDER, etc.
+  entidad     String // cotizaciones, pedidos, clientes, …
+  entidad_id  String
+  usuario_id  String?
+  datos       Json?
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([vendedor_id])
+  @@index([entidad])
+  @@index([created_at])
+}
+
+// ── Movimientos de inventario (trazabilidad de stock) ───────────────────────
+model movimientos_inventario {
+  id              BigInt   @id @default(autoincrement())
+  vendedor_id     BigInt
+  producto_id     Int
+  tipo            String // ENTRADA, SALIDA, AJUSTE_POSITIVO, AJUSTE_NEGATIVO
+  cantidad        Float
+  stock_anterior  Float
+  stock_nuevo     Float
+  costo_unitario  Float?
+  referencia      String // número de pedido, orden de compra, ajuste, etc.
+  referencia_tipo String // PEDIDO, COMPRA, AJUSTE, INICIAL
+  motivo          String?
+  usuario_id      String?
+  created_at      DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([vendedor_id])
+  @@index([producto_id])
+  @@index([created_at])
+  @@index([referencia])
+}
+
+// ── Movimientos de caja (ingresos/egresos no vinculados a pedidos) ──────────
+model movimientos_caja {
+  id          BigInt   @id @default(autoincrement())
+  vendedor_id BigInt
+  tipo        String // INGRESO, EGRESO
+  categoria   String // COBRO_CLIENTE, VENTA_CONTADO, GASTO_SERVICIOS, NOMINA, …
+  descripcion String
+  monto       Float
+  referencia  String?
+  fecha       DateTime @default(now()) @db.Date
+  usuario_id  String?
+  notas       String?
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([vendedor_id])
+  @@index([fecha])
+  @@index([tipo])
+}
+
+// ── Cotizaciones formales (cabecera) ────────────────────────────────────────
+model cotizaciones {
+  id              Int                @id @default(autoincrement())
+  vendedor_id     BigInt
+  numero          String             @unique // COT-2025-0001
+  cliente_id      Int?
+  cliente_nombre  String // denormalizado para PDF incluso si se borra cliente
+  fecha           DateTime           @default(now()) @db.Timestamp(6)
+  validez_dias    Int                @default(30)
+  estado          String             @default("BORRADOR") // BORRADOR, ENVIADA, APROBADA, RECHAZADA, CONVERTIDA, VENCIDA
+  subtotal        Float
+  descuento_total Float              @default(0)
+  iva             Float              @default(0)
+  total           Float
+  notas           String?
+  condiciones     String?
+  pdf_path        String?
+  created_at      DateTime           @default(now()) @db.Timestamp(6)
+  updated_at      DateTime           @updatedAt
+  items           items_cotizacion[]
+
+  @@index([vendedor_id])
+  @@index([cliente_id])
+  @@index([fecha])
+  @@index([estado])
+}
+
+model items_cotizacion {
+  id              Int          @id @default(autoincrement())
+  cotizacion_id   Int
+  cotizacion      cotizaciones @relation(fields: [cotizacion_id], references: [id], onDelete: Cascade)
+  sku             String?
+  producto_id     Int?
+  descripcion     String
+  cantidad        Float
+  precio_unitario Float
+  descuento_pct   Float        @default(0)
+  subtotal        Float
+
+  @@index([cotizacion_id])
+}
+
+// ── Cuentas por cobrar (una fila por remisión/pedido a crédito) ─────────────
+model cuentas_por_cobrar {
+  id                Int         @id @default(autoincrement())
+  vendedor_id       BigInt
+  cliente_id        Int?
+  pedido_grupo      String? // FK débil a pedidos.grupo_pedido (1 grupo = 1 remisión)
+  monto_original    Float
+  monto_pendiente   Float
+  fecha_emision     DateTime    @default(now()) @db.Timestamp(6)
+  fecha_vencimiento DateTime    @db.Date
+  estado            String      @default("PENDIENTE") // PENDIENTE, PARCIAL, PAGADO, VENCIDO
+  notas             String?
+  created_at        DateTime    @default(now()) @db.Timestamp(6)
+  updated_at        DateTime    @updatedAt
+  pagos             pagos_cxc[]
+
+  @@index([vendedor_id])
+  @@index([cliente_id])
+  @@index([fecha_vencimiento])
+  @@index([estado])
+}
+
+model pagos_cxc {
+  id         Int                @id @default(autoincrement())
+  cxc_id     Int
+  cxc        cuentas_por_cobrar @relation(fields: [cxc_id], references: [id])
+  monto      Float
+  fecha      DateTime           @default(now()) @db.Timestamp(6)
+  metodo     String // EFECTIVO, TRANSFERENCIA, CHEQUE
+  referencia String?
+  notas      String?
+  created_at DateTime           @default(now()) @db.Timestamp(6)
+
+  @@index([cxc_id])
+}
+
+// ── Proveedores y compras ──────────────────────────────────────────────────
+model proveedores {
+  id             Int              @id @default(autoincrement())
+  vendedor_id    BigInt
+  codigo         String // PRV-0001 (unique por vendedor, abajo)
+  nombre         String
+  nit            String?
+  contacto       String?
+  telefono       String?
+  email          String?
+  direccion      String?
+  condicion_pago String? // CONTADO, 30D, 60D, …
+  activo         Boolean          @default(true)
+  created_at     DateTime         @default(now()) @db.Timestamp(6)
+  ordenes        ordenes_compra[]
+
+  @@unique([vendedor_id, codigo])
+  @@index([vendedor_id])
+  @@index([nombre])
+}
+
+model ordenes_compra {
+  id             Int                  @id @default(autoincrement())
+  vendedor_id    BigInt
+  numero         String               @unique // OC-2025-0001
+  proveedor_id   Int
+  proveedor      proveedores          @relation(fields: [proveedor_id], references: [id])
+  fecha          DateTime             @default(now()) @db.Timestamp(6)
+  fecha_esperada DateTime?            @db.Date
+  estado         String               @default("BORRADOR") // BORRADOR, ENVIADA, CONFIRMADA, RECIBIDA_PARCIAL, RECIBIDA, CANCELADA
+  subtotal       Float
+  iva            Float                @default(0)
+  total          Float
+  notas          String?
+  pdf_path       String?
+  created_at     DateTime             @default(now()) @db.Timestamp(6)
+  updated_at     DateTime             @updatedAt
+  items          items_orden_compra[]
+  cuenta_pagar   cuentas_por_pagar?
+
+  @@index([vendedor_id])
+  @@index([proveedor_id])
+  @@index([estado])
+}
+
+model items_orden_compra {
+  id                Int            @id @default(autoincrement())
+  orden_id          Int
+  orden             ordenes_compra @relation(fields: [orden_id], references: [id], onDelete: Cascade)
+  producto_id       Int?
+  descripcion       String
+  cantidad          Float
+  cantidad_recibida Float          @default(0)
+  precio_unitario   Float
+  subtotal          Float
+
+  @@index([orden_id])
+}
+
+model cuentas_por_pagar {
+  id                Int            @id @default(autoincrement())
+  vendedor_id       BigInt
+  orden_id          Int            @unique
+  orden             ordenes_compra @relation(fields: [orden_id], references: [id])
+  proveedor_id      Int
+  monto_original    Float
+  monto_pendiente   Float
+  fecha_emision     DateTime       @default(now()) @db.Timestamp(6)
+  fecha_vencimiento DateTime       @db.Date
+  estado            String         @default("PENDIENTE") // PENDIENTE, PARCIAL, PAGADO, VENCIDO
+  created_at        DateTime       @default(now()) @db.Timestamp(6)
+  updated_at        DateTime       @updatedAt
+
+  @@index([vendedor_id])
+  @@index([proveedor_id])
+  @@index([fecha_vencimiento])
+  @@index([estado])
+}
+
+// ── Heartbeat / alertas proactivas ─────────────────────────────────────────
+model heartbeat_log {
+  id           BigInt   @id @default(autoincrement())
+  vendedor_id  BigInt
+  executed_at  DateTime @default(now()) @db.Timestamp(6)
+  chat_id      String? // Telegram chat.id al que se envió el resumen
+  message_id   String? // id del mensaje enviado por el bot (para edición posterior)
+  alerts_sent  Json? // { stockBajo: N, cxcVencida: N, pedidosSinDespachar: N, ocPendientes: N }
+  summary_text String? // Texto HTML enviado (para auditoría / rewind)
+  trigger      String   @default("cron") // "cron" | "manual" | "startup"
+
+  @@index([vendedor_id])
+  @@index([executed_at])
+}
+
+// ── Prospección / rutas de visita ──────────────────────────────────────────
+//
+// Fuente: Rutas_Prospeccion_Venco.xlsx (30 rutas Bogotá pre-agrupadas) +
+// REPORTE CLI.xlsx (1485 históricos). La DB es la fuente de verdad; el xlsx
+// se regenera bajo demanda con `export_rutas_xlsx`.
+
+model rutas_prospeccion {
+  id          Int          @id @default(autoincrement())
+  vendedor_id BigInt
+  numero      Int // 1..29 = Bogotá, 100+ = Cundinamarca/otros
+  zona        String // "NORTE EXTREMO (CLL 128+)", etc.
+  sector      String? // "Sector 1 de 7"
+  notas       String?
+  created_at  DateTime     @default(now()) @db.Timestamp(6)
+  prospectos  prospectos[]
+
+  @@unique([vendedor_id, numero])
+  @@index([vendedor_id])
+}
+
+model prospectos {
+  id                 Int                    @id @default(autoincrement())
+  vendedor_id        BigInt
+  ruta_id            Int? // null = histórico sin ruta asignada
+  ruta               rutas_prospeccion?     @relation(fields: [ruta_id], references: [id], onDelete: SetNull)
+  nombre             String
+  direccion          String?
+  telefono           String?
+  vendedor_historico String? // JD, JG, CAG, JJ, SM, MR, EM, AC, ...
+  // Campos enriquecidos (REPORTE CLI)
+  nit                String?
+  email              String?
+  contacto           String?
+  departamento       String?
+  municipio          String?
+  localidad          String?
+  zona_reporte       String?
+  tipo               String? // FF, MM, ...
+  estado             String                 @default("PENDIENTE") // PENDIENTE, EN_RUTA, VISITADO, NO_APLICA
+  ultima_visita      DateTime?              @db.Date
+  created_at         DateTime               @default(now()) @db.Timestamp(6)
+  updated_at         DateTime               @updatedAt
+  visitas            visitas_prospeccion[]
+
+  @@index([vendedor_id])
+  @@index([ruta_id])
+  @@index([estado])
+  @@index([nombre])
+}
+
+model visitas_prospeccion {
+  id              Int        @id @default(autoincrement())
+  vendedor_id     BigInt
+  prospecto_id    Int
+  prospecto       prospectos @relation(fields: [prospecto_id], references: [id], onDelete: Cascade)
+  ruta_id         Int? // ruta del día en que se visitó
+  fecha           DateTime   @default(now()) @db.Timestamp(6)
+  resultado       String? // COMPRO, INTERESADO, MUY_INTERESADO, NO_ATENDIO, NO_APLICA
+  interes         Int? // 1-5
+  proxima_accion  String?
+  notas           String?
+  created_at      DateTime   @default(now()) @db.Timestamp(6)
+
+  @@index([vendedor_id])
+  @@index([prospecto_id])
+  @@index([fecha])
+}

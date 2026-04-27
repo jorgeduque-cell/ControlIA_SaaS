@@ -1,0 +1,206 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model baseClientes {
+  id         BigInt   @id @default(autoincrement())
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model clientes {
+  id                 Int             @id @default(autoincrement())
+  vendedor_id        BigInt
+  nombre             String
+  telefono           String?
+  direccion          String?
+  tipo_negocio       String?
+  estado             String?         @default("Prospecto")
+  fecha_registro     DateTime?       @db.Date
+  ultima_interaccion DateTime?       @db.Date
+  latitud            Float?
+  longitud           Float?
+  dia_visita         String?
+  vendedores         vendedores      @relation(fields: [vendedor_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  notas_cliente      notas_cliente[]
+  pedidos            pedidos[]
+
+  @@index([vendedor_id], map: "idx_clientes_vendedor")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model finanzas {
+  id          Int        @id @default(autoincrement())
+  vendedor_id BigInt
+  tipo        String
+  concepto    String?
+  monto       Float
+  fecha       DateTime?  @db.Date
+  pedido_id   Int?
+  pedidos     pedidos?   @relation(fields: [pedido_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vendedores  vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([vendedor_id], map: "idx_finanzas_vendedor")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model inventario {
+  id                   Int        @id @default(autoincrement())
+  vendedor_id          BigInt
+  producto             String
+  stock_actual         Int        @default(0)
+  stock_minimo         Int        @default(0)
+  ultima_actualizacion DateTime?  @db.Date
+  vendedores           vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([vendedor_id], map: "idx_inventario_vendedor")
+}
+
+model leads {
+  id          BigInt                    @id @default(autoincrement())
+  place_id    String                    @unique
+  name        String
+  phone       String?
+  address     String?
+  rating      Decimal?                  @db.Decimal
+  location    Unsupported("geography")?
+  zone_tag    String?
+  status      String?                   @default("new")
+  created_at  DateTime?                 @default(dbgenerated("timezone('utc'::text, now())")) @db.Timestamptz(6)
+  category    String?
+  clean_phone String?
+
+  @@index([location], map: "leads_geo_index", type: Gist)
+}
+
+model leads_fijos {
+  id          BigInt                    @id @default(autoincrement())
+  place_id    String                    @unique
+  name        String?
+  phone       String?
+  clean_phone String?
+  address     String?
+  rating      Decimal?                  @db.Decimal
+  location    Unsupported("geography")?
+  zone_tag    String?
+  category    String?
+  created_at  DateTime?                 @default(dbgenerated("timezone('utc'::text, now())")) @db.Timestamptz(6)
+
+  @@index([location], map: "leads_fijos_geo_index", type: Gist)
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model metas {
+  id             Int        @id @default(autoincrement())
+  vendedor_id    BigInt
+  producto       String
+  meta_unidades  Int        @default(0)
+  mes            String
+  fecha_creacion DateTime?  @db.Date
+  vendedores     vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([vendedor_id], map: "idx_metas_vendedor")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model notas_cliente {
+  id          Int        @id @default(autoincrement())
+  vendedor_id BigInt
+  cliente_id  Int
+  texto       String
+  fecha       DateTime?  @db.Date
+  clientes    clientes   @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vendedores  vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([vendedor_id], map: "idx_notas_vendedor")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model pedidos {
+  id            Int        @id @default(autoincrement())
+  vendedor_id   BigInt
+  cliente_id    Int
+  producto      String
+  cantidad      Int
+  precio_compra Float?
+  precio_venta  Float?
+  estado        String?    @default("Pendiente")
+  estado_pago   String?    @default("Pendiente")
+  fecha         DateTime?  @db.Date
+  grupo_pedido  String?
+  finanzas      finanzas[]
+  clientes      clientes   @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vendedores    vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([vendedor_id], map: "idx_pedidos_vendedor")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model productos {
+  id                   Int        @id @default(autoincrement())
+  vendedor_id          BigInt
+  nombre               String
+  precio_compra        Float?     @default(0)
+  precio_venta         Float?     @default(0)
+  stock_actual         Int?       @default(0)
+  fecha_creacion       DateTime?  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  stock_minimo         Int?       @default(0)
+  ultima_actualizacion DateTime?  @db.Date
+  vendedores           vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([vendedor_id], map: "idx_productos_vendedor")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model spatial_ref_sys {
+  srid      Int     @id
+  auth_name String? @db.VarChar(256)
+  auth_srid Int?
+  srtext    String? @db.VarChar(2048)
+  proj4text String? @db.VarChar(2048)
+}
+
+model vendedores {
+  id                BigInt          @id
+  nombre_negocio    String          @default("Mi Negocio")
+  estado            String          @default("Inactivo")
+  fecha_vencimiento DateTime?       @db.Date
+  telefono_soporte  String?
+  fecha_registro    DateTime?       @default(now()) @db.Timestamp(6)
+  logo_base64       String?
+  meta_mensual      Float?          @default(0)
+  clientes          clientes[]
+  context_memory    context_memory[]
+  finanzas          finanzas[]
+  inventario        inventario[]
+  metas             metas[]
+  notas_cliente     notas_cliente[]
+  pedidos           pedidos[]
+  productos         productos[]
+}
+
+/// Tabla para memoria semántica y contexto de clientes (RAG)
+model context_memory {
+  id          BigInt    @id @default(autoincrement())
+  vendedor_id BigInt
+  cliente_id  BigInt?
+  tipo        String    @db.VarChar(50)
+  contenido   String    @db.Text
+  embedding   Unsupported("vector(1536)")?
+  metadata    Json?     @default("{}")
+  created_at  DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime? @default(now()) @db.Timestamptz(6)
+  
+  clientes    clientes?  @relation(fields: [cliente_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  vendedores  vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  
+  @@index([vendedor_id], map: "idx_context_memory_vendedor")
+  @@index([cliente_id], map: "idx_context_memory_cliente")
+  @@index([tipo], map: "idx_context_memory_tipo")
+}

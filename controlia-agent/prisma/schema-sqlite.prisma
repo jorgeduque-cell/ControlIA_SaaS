@@ -1,0 +1,186 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model baseClientes {
+  id         Int      @id @default(autoincrement())
+  created_at DateTime @default(now())
+}
+
+model clientes {
+  id                 Int             @id @default(autoincrement())
+  vendedor_id        Int
+  nombre             String
+  telefono           String?
+  direccion          String?
+  tipo_negocio       String?
+  estado             String?         @default("Prospecto")
+  fecha_registro     DateTime?
+  ultima_interaccion DateTime?
+  latitud            Float?
+  longitud           Float?
+  dia_visita         String?
+  vendedores         vendedores      @relation(fields: [vendedor_id], references: [id], onDelete: Cascade)
+  notas_cliente      notas_cliente[]
+  pedidos            pedidos[]
+
+  @@index([vendedor_id])
+}
+
+model finanzas {
+  id          Int        @id @default(autoincrement())
+  vendedor_id Int
+  tipo        String
+  concepto    String?
+  monto       Float
+  fecha       DateTime?
+  pedido_id   Int?
+  pedidos     pedidos?   @relation(fields: [pedido_id], references: [id], onDelete: NoAction)
+  vendedores  vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade)
+
+  @@index([vendedor_id])
+}
+
+model inventario {
+  id                   Int        @id @default(autoincrement())
+  vendedor_id          Int
+  producto             String
+  stock_actual         Int        @default(0)
+  stock_minimo         Int        @default(0)
+  ultima_actualizacion DateTime?
+  vendedores           vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade)
+
+  @@index([vendedor_id])
+}
+
+model leads {
+  id          Int      @id @default(autoincrement())
+  place_id    String   @unique
+  name        String
+  phone       String?
+  address     String?
+  rating      Float?
+  zone_tag    String?
+  status      String?  @default("new")
+  created_at  DateTime @default(now())
+  category    String?
+  clean_phone String?
+
+  @@index([place_id])
+}
+
+model leads_fijos {
+  id          Int      @id @default(autoincrement())
+  place_id    String   @unique
+  name        String?
+  phone       String?
+  clean_phone String?
+  address     String?
+  rating      Float?
+  zone_tag    String?
+  category    String?
+  created_at  DateTime @default(now())
+
+  @@index([place_id])
+}
+
+model metas {
+  id             Int        @id @default(autoincrement())
+  vendedor_id    Int
+  producto       String
+  meta_unidades  Int        @default(0)
+  mes            String
+  fecha_creacion DateTime?
+  vendedores     vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade)
+
+  @@index([vendedor_id])
+}
+
+model notas_cliente {
+  id          Int        @id @default(autoincrement())
+  vendedor_id Int
+  cliente_id  Int
+  texto       String
+  fecha       DateTime?
+  clientes    clientes   @relation(fields: [cliente_id], references: [id], onDelete: NoAction)
+  vendedores  vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade)
+
+  @@index([vendedor_id])
+}
+
+model pedidos {
+  id            Int        @id @default(autoincrement())
+  vendedor_id   Int
+  cliente_id    Int
+  producto      String
+  cantidad      Int
+  precio_compra Float?
+  precio_venta  Float?
+  estado        String?    @default("Pendiente")
+  estado_pago   String?    @default("Pendiente")
+  fecha         DateTime?
+  grupo_pedido  String?
+  finanzas      finanzas[]
+  clientes      clientes   @relation(fields: [cliente_id], references: [id], onDelete: NoAction)
+  vendedores    vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade)
+
+  @@index([vendedor_id])
+}
+
+model productos {
+  id                   Int        @id @default(autoincrement())
+  vendedor_id          Int
+  nombre               String
+  precio_compra        Float?     @default(0)
+  precio_venta         Float?     @default(0)
+  stock_actual         Int?       @default(0)
+  fecha_creacion       DateTime?  @default(now())
+  stock_minimo         Int?       @default(0)
+  ultima_actualizacion DateTime?
+  vendedores           vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade)
+
+  @@index([vendedor_id])
+}
+
+model vendedores {
+  id                Int             @id
+  nombre_negocio    String          @default("Mi Negocio")
+  estado            String          @default("Inactivo")
+  fecha_vencimiento DateTime?
+  telefono_soporte  String?
+  fecha_registro    DateTime?       @default(now())
+  logo_base64       String?
+  meta_mensual      Float?          @default(0)
+  clientes          clientes[]
+  context_memory    context_memory[]
+  finanzas          finanzas[]
+  inventario        inventario[]
+  metas             metas[]
+  notas_cliente     notas_cliente[]
+  pedidos           pedidos[]
+  productos         productos[]
+}
+
+// Tabla para memoria semántica y contexto (sin vector para SQLite)
+model context_memory {
+  id          Int       @id @default(autoincrement())
+  vendedor_id Int
+  cliente_id  Int?
+  tipo        String
+  contenido   String
+  metadata    String?   @default("{}") // JSON como string en SQLite
+  created_at  DateTime? @default(now())
+  updated_at  DateTime? @default(now())
+  
+  clientes    clientes?  @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
+  vendedores  vendedores @relation(fields: [vendedor_id], references: [id], onDelete: Cascade)
+  
+  @@index([vendedor_id])
+  @@index([cliente_id])
+  @@index([tipo])
+}
